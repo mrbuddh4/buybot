@@ -11,6 +11,9 @@ export class PriceService {
   private routerAddress: string;
   private wethAddress: string;
   private usdcAddress: string;
+  private hlpmmQuoterAddress: string | null;
+  private hlpmmFactoryAddress: string | null;
+  private hlpmmUsidAddress: string | null;
 
   constructor() {
     const rpcEndpoint = process.env.RPC_ENDPOINT!;
@@ -18,6 +21,9 @@ export class PriceService {
     this.routerAddress = process.env.DEX_ROUTER_ADDRESS!;
     this.wethAddress = process.env.WETH_ADDRESS!;
     this.usdcAddress = process.env.USDC_ADDRESS || '0xf8850b62AE017c55be7f571BBad840b4f3DA7D49';
+    this.hlpmmQuoterAddress = process.env.HLPMM_QUOTER_ADDRESS || null;
+    this.hlpmmFactoryAddress = process.env.HLPMM_FACTORY_ADDRESS || null;
+    this.hlpmmUsidAddress = process.env.HLPMM_USID_ADDRESS || null;
   }
 
   async getTokenPrice(tokenAddress: string): Promise<TokenPrice | null> {
@@ -70,7 +76,8 @@ export class PriceService {
       }
 
       if (priceInEth === '0' && priceInUsd === '0') {
-        return null;
+        const hlpmmPrice = await this.getHLPMMTokenPrice(tokenAddress);
+        return hlpmmPrice;
       }
 
       return {
@@ -78,7 +85,84 @@ export class PriceService {
         priceInUsd,
       };
     } catch (error) {
-      logger.error('Error getting token price:', error);
+      logger.error('Error getting token price from AMM:', error);
+      return this.getHLPMMTokenPrice(tokenAddress);
+    }
+  }
+
+  async getHLPMMTokenPrice(tokenAddress: string): Promise<TokenPrice | null> {
+    if (!this.hlpmmQuoterAddress || !this.hlpmmFactoryAddress || !this.hlpmmUsidAddress) {
+      return null;
+    }
+
+    try {
+      const factoryContract = new ethers.Contract(
+        this.hlpmmFactoryAddress,
+        ['function tokenToPool(address token) view returns (address)'],
+        this.provider
+      );
+
+      const poolAddress = await factoryContract.tokenToPool(tokenAddress);
+      if (!poolAddress || poolAddress === ethers.ZeroAddress) {
+        return null;
+      }
+
+      const quoterContract = new ethers.Contract(
+        this.hlpmmQuoterAddress,
+        [
+          'function getSpotPrice(address pool) view returns (uint256)',
+          'function getMarketCap(address pool) view returns (uint256)',
+        ],
+        this.provider
+      );
+
+      const spotPrice = await quoterContract.getSpotPrice(poolAddress);
+      const priceInUsid = ethers.formatEther(spotPrice);
+      const priceInUsd = priceInUsid;
+
+      const paxUsdPrice = await this.getPaxUsdPrice(6);
+      const priceInEth = paxUsdPrice > 0
+        ? (parseFloat(priceInUsd) / paxUsdPrice).toFixed(8)
+        : '0';
+
+      if (priceInEth === '0' && priceInUsd === '0') {
+        return null;
+      }
+
+      return { priceInEth, priceInUsd };
+    } catch (error) {
+      logger.error('Error getting HLPMM token price:', error);
+      return null;
+    }
+  }
+
+  async getHLPMMMarketCap(tokenAddress: string): Promise<string | null> {
+    if (!this.hlpmmQuoterAddress || !this.hlpmmFactoryAddress) {
+      return null;
+    }
+
+    try {
+      const factoryContract = new ethers.Contract(
+        this.hlpmmFactoryAddress,
+        ['function tokenToPool(address token) view returns (address)'],
+        this.provider
+      );
+
+      const poolAddress = await factoryContract.tokenToPool(tokenAddress);
+      if (!poolAddress || poolAddress === ethers.ZeroAddress) {
+        return null;
+      }
+
+      const quoterContract = new ethers.Contract(
+        this.hlpmmQuoterAddress,
+        ['function getMarketCap(address pool) view returns (uint256)'],
+        this.provider
+      );
+
+      const marketCap = await quoterContract.getMarketCap(poolAddress);
+      return ethers.formatEther(marketCap);
+    } catch (error) {
+      logger.error('Error getting HLPMM market cap:', error);
       return null;
     }
   }

@@ -2,6 +2,7 @@ import TelegramBot from 'node-telegram-bot-api';
 import { Database } from '../database/Database';
 import { PriceService } from '../blockchain/PriceService';
 import { MonitoringService } from '../blockchain/MonitoringService';
+import { TokenMetadataService } from '../blockchain/TokenMetadataService';
 import { logger } from '../utils/logger';
 import { validateEthereumAddress, validateHttpUrl } from '../utils/helpers';
 import { formatWatchlistMessage, formatTokenInfo } from '../utils/formatter';
@@ -24,6 +25,7 @@ export class CommandHandler {
   private db: Database;
   private priceService: PriceService;
   private monitoringService: MonitoringService;
+  private tokenMetadataService: TokenMetadataService;
   private pendingConfigInputs: Map<string, PendingConfigType> = new Map();
   private pendingTokenMediaAddress: Map<string, string> = new Map();
 
@@ -32,6 +34,7 @@ export class CommandHandler {
     this.db = Database.getInstance();
     this.priceService = new PriceService();
     this.monitoringService = MonitoringService.getInstance(bot);
+    this.tokenMetadataService = new TokenMetadataService();
   }
 
   async handleStart(msg: TelegramBot.Message): Promise<void> {
@@ -403,6 +406,9 @@ Add me to a group to monitor tokens for everyone!
         await this.db.addWatchedToken(chatId, tokenAddress, tokenInfo.symbol, tokenInfo.name);
         await this.monitoringService.startMonitoringToken(tokenAddress);
         this.pendingConfigInputs.delete(key);
+
+        await this.trySetHLPMMTokenImage(chatId, tokenAddress);
+
         await this.bot.sendMessage(chatId, `✅ Added ${tokenInfo.symbol} to watchlist.`);
         await this.showSettingsMenu(chatId);
         return;
@@ -457,6 +463,8 @@ Add me to a group to monitor tokens for everyone!
 
       await this.db.addWatchedToken(chatId, tokenAddress, tokenInfo.symbol, tokenInfo.name);
       await this.monitoringService.startMonitoringToken(tokenAddress);
+
+      await this.trySetHLPMMTokenImage(chatId, tokenAddress);
 
       const successMessage = `
 ✅ **Now monitoring ${tokenInfo.symbol}**
@@ -745,6 +753,23 @@ Updated: ${new Date().toLocaleString()}
     } catch (error) {
       logger.error('Error checking admin permissions:', error);
       return false;
+    }
+  }
+
+  private async trySetHLPMMTokenImage(chatId: number, tokenAddress: string): Promise<void> {
+    if (!this.tokenMetadataService.isEnabled()) return;
+
+    try {
+      const isHlpmm = await this.tokenMetadataService.isHLPMMToken(tokenAddress);
+      if (!isHlpmm) return;
+
+      const imageUrl = await this.tokenMetadataService.fetchAndUploadTokenImage(tokenAddress);
+      if (imageUrl) {
+        await this.db.setWatchedTokenMedia(chatId, tokenAddress, 'photo', imageUrl);
+        logger.info(`Auto-set HLPMM token image for ${tokenAddress} in chat ${chatId}`);
+      }
+    } catch (error) {
+      logger.warn(`Failed to auto-set HLPMM token image for ${tokenAddress}:`, error);
     }
   }
 
