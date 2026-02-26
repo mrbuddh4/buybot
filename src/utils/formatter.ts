@@ -18,6 +18,7 @@ interface TransactionAlertData {
   walletHoldingsToken?: string;
   walletHoldingsUsd?: string;
   positionLabel?: string;
+  dexSource?: 'AMM' | 'HLPMM';
 }
 
 function escapeHtml(value: string): string {
@@ -107,13 +108,13 @@ export function formatTransactionAlert(data: TransactionAlertData): string {
   const positionText = data.positionLabel || 'NEW';
   
   return `
-<b>BUY DETECTED ON PAXEER NETWORK</b>
+<b>BUY DETECTED ON PAXEER NETWORK${data.dexSource === 'HLPMM' ? ' (HLPMM)' : ''}</b>
 
 ${arrowLine}
 ${usdDisplay} <a href="${tokenUrl}">${escapedTokenName}</a> ${actionUpper}!
 ${statusDots}
 
-➡️ PAX: ${ethAmount.toFixed(4)} (${usdDisplay})
+➡️ ${data.dexSource === 'HLPMM' ? 'USID' : 'PAX'}: ${ethAmount.toFixed(4)} (${usdDisplay})
 ⬅️ ${escapedTokenSymbol}: ${formatTokenAmount(tokenAmount)}
 👤 <a href="${walletUrl}">Buyer</a> / <a href="${txUrl}">Txn</a>
 🅿️ Position: ${positionText}

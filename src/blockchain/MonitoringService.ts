@@ -14,6 +14,7 @@ interface SwapEvent {
   txHash: string;
   blockNumber: number;
   timestamp: number;
+  dexSource?: 'AMM' | 'HLPMM';
 }
 
 export class MonitoringService {
@@ -28,6 +29,11 @@ export class MonitoringService {
   private monitoredTokens: Map<string, ethers.Contract> = new Map();
   private pollingInterval: NodeJS.Timeout | null = null;
   private lastBlockNumber: number = 0;
+  private hlpmmEventEmitter: ethers.Contract | null = null;
+  private hlpmmFactory: ethers.Contract | null = null;
+  private hlpmmUsidAddress: string | null = null;
+  private hlpmmPoolTokenCache: Map<string, string> = new Map();
+  private hlpmmEnabled: boolean = false;
 
   private constructor(bot: TelegramBot) {
     const rpcEndpoint = process.env.RPC_ENDPOINT!;
@@ -37,6 +43,39 @@ export class MonitoringService {
     this.priceService = new PriceService();
     this.routerAddress = process.env.DEX_ROUTER_ADDRESS!;
     this.wethAddress = process.env.WETH_ADDRESS!;
+    this.initHLPMM();
+  }
+
+  private initHLPMM(): void {
+    const emitterAddr = process.env.HLPMM_EVENT_EMITTER_ADDRESS;
+    const factoryAddr = process.env.HLPMM_FACTORY_ADDRESS;
+    const usidAddr = process.env.HLPMM_USID_ADDRESS;
+
+    if (!emitterAddr || !factoryAddr || !usidAddr) {
+      logger.info('HLPMM monitoring disabled (missing HLPMM_EVENT_EMITTER_ADDRESS, HLPMM_FACTORY_ADDRESS, or HLPMM_USID_ADDRESS)');
+      return;
+    }
+
+    this.hlpmmEventEmitter = new ethers.Contract(
+      emitterAddr,
+      [
+        'event Swap(address indexed pool, address indexed sender, address tokenIn, address tokenOut, uint256 amountIn, uint256 amountOut, uint256 newReserveUSID, uint256 newReserveToken, uint256 feeAmount, uint256 timestamp)',
+      ],
+      this.provider
+    );
+
+    this.hlpmmFactory = new ethers.Contract(
+      factoryAddr,
+      [
+        'function poolToToken(address pool) view returns (address)',
+        'function tokenToPool(address token) view returns (address)',
+      ],
+      this.provider
+    );
+
+    this.hlpmmUsidAddress = usidAddr.toLowerCase();
+    this.hlpmmEnabled = true;
+    logger.info('HLPMM monitoring enabled', { emitterAddr, factoryAddr, usidAddr });
   }
 
   static getInstance(bot: TelegramBot): MonitoringService {
@@ -135,7 +174,22 @@ export class MonitoringService {
               }
             }
           }
-          
+
+          if (this.hlpmmEnabled && this.hlpmmEventEmitter) {
+            try {
+              const swapFilter = this.hlpmmEventEmitter.filters.Swap();
+              const swapEvents = await this.hlpmmEventEmitter.queryFilter(swapFilter, fromBlock, currentBlock);
+
+              for (const event of swapEvents) {
+                if ('args' in event) {
+                  await this.handleHLPMMSwapEvent(event);
+                }
+              }
+            } catch (hlpmmError) {
+              logger.error('Error polling HLPMM EventEmitter:', hlpmmError);
+            }
+          }
+
           this.lastBlockNumber = currentBlock;
         }
       } catch (error) {
@@ -250,6 +304,7 @@ export class MonitoringService {
         txHash,
         blockNumber,
         timestamp: Date.now(),
+        dexSource: 'AMM',
       };
 
       // Get additional transaction details
@@ -436,9 +491,244 @@ export class MonitoringService {
         logger.warn(`No alert delivery succeeded for tx ${swapEvent.txHash}; transaction not marked as detected.`);
       }
 
-      logger.info(`Detected ${type.toUpperCase()}: ${tokenInfo?.symbol || tokenAddress} - ${swapEvent.txHash}`);
+      logger.info(`Detected ${type.toUpperCase()} (AMM): ${tokenInfo?.symbol || tokenAddress} - ${swapEvent.txHash}`);
     } catch (error) {
       logger.error('Error handling transfer event:', error);
+    }
+  }
+
+  private async resolveHLPMMPoolToken(poolAddress: string): Promise<string | null> {
+    const normalized = poolAddress.toLowerCase();
+    const cached = this.hlpmmPoolTokenCache.get(normalized);
+    if (cached) return cached;
+
+    if (!this.hlpmmFactory) return null;
+
+    try {
+      const tokenAddr: string = await this.hlpmmFactory.poolToToken(poolAddress);
+      if (!tokenAddr || tokenAddr === ethers.ZeroAddress) return null;
+      const lower = tokenAddr.toLowerCase();
+      this.hlpmmPoolTokenCache.set(normalized, lower);
+      return lower;
+    } catch (error) {
+      logger.error(`Failed to resolve HLPMM pool ${poolAddress} to token:`, error);
+      return null;
+    }
+  }
+
+  private async handleHLPMMSwapEvent(event: any): Promise<void> {
+    try {
+      const pool: string = event.args[0];
+      const sender: string = event.args[1];
+      const tokenIn: string = event.args[2];
+      const tokenOut: string = event.args[3];
+      const amountIn: bigint = event.args[4];
+      const amountOut: bigint = event.args[5];
+      const feeAmount: bigint = event.args[8];
+
+      const txHash = event?.log?.transactionHash || event?.transactionHash;
+      const blockNumber = event?.log?.blockNumber || event?.blockNumber;
+
+      if (!txHash || !blockNumber) return;
+
+      const isBuy = tokenIn.toLowerCase() === this.hlpmmUsidAddress;
+      if (!isBuy) return;
+
+      const tokenAddress = tokenOut.toLowerCase();
+
+      if (!this.monitoredTokens.has(tokenAddress)) {
+        const resolved = await this.resolveHLPMMPoolToken(pool);
+        if (!resolved || !this.monitoredTokens.has(resolved)) return;
+      }
+
+      const alreadyDetected = await this.db.hasDetectedTransaction(txHash);
+      if (alreadyDetected) return;
+
+      const tx = await this.provider.getTransaction(txHash);
+      if (!tx) return;
+
+      const buyer = tx.from;
+
+      const tokenInfo = await this.priceService.getTokenInfo(tokenAddress);
+      const tokenDecimals = tokenInfo?.decimals ?? 18;
+      const tokenAmount = ethers.formatUnits(amountOut, tokenDecimals);
+      const usidAmount = ethers.formatEther(amountIn);
+
+      const tokenAmountNumeric = parseFloat(tokenAmount || '0');
+      const usidAmountNumeric = parseFloat(usidAmount || '0');
+
+      const priceInUsdNumeric = tokenAmountNumeric > 0
+        ? usidAmountNumeric / tokenAmountNumeric
+        : 0;
+
+      const price = await this.priceService.getTokenPrice(tokenAddress);
+      const effectivePriceInUsd = priceInUsdNumeric > 0
+        ? priceInUsdNumeric.toFixed(6)
+        : (price?.priceInUsd || '0');
+      const effectivePriceInEth = price?.priceInEth || '0';
+
+      const totalUsdValue = usidAmountNumeric;
+
+      const hlpmmMarketCap = await this.priceService.getHLPMMMarketCap(tokenAddress);
+      const marketCapUsd = hlpmmMarketCap
+        || ((parseFloat(tokenInfo?.totalSupply || '0') || 0) * parseFloat(effectivePriceInUsd)).toString();
+
+      const balanceContract = new ethers.Contract(
+        tokenAddress,
+        ['function balanceOf(address) view returns (uint256)'],
+        this.provider
+      );
+      const currentHoldingsRaw: bigint = await balanceContract.balanceOf(buyer);
+      const currentHoldingsToken = ethers.formatUnits(currentHoldingsRaw, tokenDecimals);
+      const currentHoldingsNumeric = parseFloat(currentHoldingsToken || '0') || 0;
+      const currentHoldingsUsdNumeric = currentHoldingsNumeric * parseFloat(effectivePriceInUsd);
+
+      const previousSnapshot = await this.db.getTraderPosition(tokenAddress, buyer);
+      const previousHoldingsNumeric = parseFloat(previousSnapshot?.holdings_token || '0') || 0;
+      let positionLabel = 'NEW';
+
+      if (previousSnapshot && previousHoldingsNumeric > 0) {
+        positionLabel = this.formatPositionPercent(currentHoldingsNumeric, previousHoldingsNumeric);
+      } else {
+        const hasPriorInteraction = await this.hasPriorTokenInteraction(
+          tokenAddress,
+          buyer,
+          txHash,
+          blockNumber
+        );
+        if (hasPriorInteraction) {
+          const inferredPrevious = Math.max(0, currentHoldingsNumeric - tokenAmountNumeric);
+          positionLabel = this.formatPositionPercent(currentHoldingsNumeric, inferredPrevious);
+        }
+      }
+
+      const holdingsTokenDisplay = currentHoldingsNumeric >= 1_000_000
+        ? `${(currentHoldingsNumeric / 1_000_000).toFixed(2)}M`
+        : currentHoldingsNumeric >= 1_000
+          ? `${(currentHoldingsNumeric / 1_000).toFixed(2)}K`
+          : currentHoldingsNumeric.toFixed(2);
+      const holdingsUsdDisplay = `$${Math.max(0, Math.round(currentHoldingsUsdNumeric)).toLocaleString()}`;
+
+      const watchers = await this.db.getTokenWatchers(tokenAddress);
+      if (watchers.length === 0) {
+        logger.info(`No watchers for HLPMM token ${tokenInfo?.symbol || tokenAddress}; skipping alert for tx ${txHash}`);
+        return;
+      }
+
+      let deliveredCount = 0;
+      for (const watcher of watchers) {
+        const settings = await this.db.getChatSettings(watcher.chat_id);
+        const effectiveMediaType = watcher.alert_media_type || settings.alert_media_type;
+        const effectiveMediaFileId = watcher.alert_media_file_id || settings.alert_media_file_id;
+
+        if (totalUsdValue < settings.min_buy_usdc) {
+          logger.info(
+            `Skipped HLPMM alert for chat ${watcher.chat_id}: swap $${totalUsdValue.toFixed(2)} below min buy $${settings.min_buy_usdc.toFixed(2)} (tx ${txHash})`
+          );
+          continue;
+        }
+
+        const message = formatTransactionAlert({
+          type: 'buy',
+          tokenAddress,
+          tokenSymbol: tokenInfo?.symbol || 'UNKNOWN',
+          tokenName: tokenInfo?.name || 'Unknown Token',
+          amount: tokenAmount,
+          ethValue: usidAmount,
+          priceInEth: effectivePriceInEth,
+          priceInUsd: effectivePriceInUsd,
+          marketCapUsd,
+          iconMultiplier: settings.icon_multiplier,
+          buyIconPattern: settings.buy_icon_pattern,
+          walletHoldingsToken: holdingsTokenDisplay,
+          walletHoldingsUsd: holdingsUsdDisplay,
+          positionLabel,
+          buyer,
+          txHash,
+          blockNumber,
+          dexSource: 'HLPMM',
+        });
+
+        const links = await this.db.getAlertLinks(watcher.chat_id);
+        const websiteUrl = links.website_url || process.env.ALERT_WEBSITE_URL;
+        const telegramUrl = links.telegram_url || process.env.ALERT_TELEGRAM_URL;
+        const xUrl = links.x_url || process.env.ALERT_X_URL;
+        const getFundedUrl = 'https://hyperpaxeer.com/';
+
+        const buttonRow: Array<{ text: string; url: string }> = [];
+        if (websiteUrl) buttonRow.push({ text: 'Website', url: websiteUrl });
+        if (telegramUrl) buttonRow.push({ text: 'Telegram', url: telegramUrl });
+        if (xUrl) buttonRow.push({ text: 'X', url: xUrl });
+        const getFundedRow: Array<{ text: string; url: string }> = [
+          { text: 'Get Funded', url: getFundedUrl },
+        ];
+
+        const sendOptions: TelegramBot.SendMessageOptions = {
+          parse_mode: 'HTML',
+          disable_web_page_preview: true,
+          reply_markup: {
+            inline_keyboard: buttonRow.length > 0
+              ? [buttonRow, getFundedRow]
+              : [getFundedRow],
+          },
+        };
+
+        try {
+          let sent = false;
+
+          if (effectiveMediaFileId && effectiveMediaType === 'photo') {
+            try {
+              await this.bot.sendPhoto(watcher.chat_id, effectiveMediaFileId, {
+                caption: message,
+                parse_mode: 'HTML',
+                reply_markup: sendOptions.reply_markup,
+              });
+              sent = true;
+              deliveredCount += 1;
+            } catch (mediaError) {
+              logger.warn(`HLPMM photo alert failed for chat ${watcher.chat_id}, falling back to text alert.`, mediaError);
+            }
+          } else if (effectiveMediaFileId && effectiveMediaType === 'animation') {
+            try {
+              await this.bot.sendAnimation(watcher.chat_id, effectiveMediaFileId, {
+                caption: message,
+                parse_mode: 'HTML',
+                reply_markup: sendOptions.reply_markup,
+              });
+              sent = true;
+              deliveredCount += 1;
+            } catch (mediaError) {
+              logger.warn(`HLPMM GIF alert failed for chat ${watcher.chat_id}, falling back to text alert.`, mediaError);
+            }
+          }
+
+          if (!sent) {
+            await this.bot.sendMessage(watcher.chat_id, message, sendOptions);
+            deliveredCount += 1;
+          }
+        } catch (error) {
+          logger.error(`Failed to send HLPMM notification to chat ${watcher.chat_id}:`, error);
+        }
+      }
+
+      if (deliveredCount > 0) {
+        await this.db.saveDetectedTransaction(
+          tokenAddress,
+          txHash,
+          'buy',
+          buyer,
+          amountOut.toString(),
+          usidAmount
+        );
+        await this.db.setTraderPosition(tokenAddress, buyer, currentHoldingsToken);
+        logger.info(`Delivered HLPMM alert for tx ${txHash} to ${deliveredCount} watcher(s)`);
+      } else {
+        logger.warn(`No HLPMM alert delivery succeeded for tx ${txHash}; transaction not marked as detected.`);
+      }
+
+      logger.info(`Detected BUY (HLPMM): ${tokenInfo?.symbol || tokenAddress} - ${txHash}`);
+    } catch (error) {
+      logger.error('Error handling HLPMM swap event:', error);
     }
   }
 
