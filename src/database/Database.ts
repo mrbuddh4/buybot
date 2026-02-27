@@ -61,6 +61,11 @@ export class Database {
   async initialize(): Promise<void> {
     try {
       const connectionString = process.env.DATABASE_URL;
+      if (connectionString && connectionString.includes('${{')) {
+        throw new Error(
+          'DATABASE_URL contains an unresolved template placeholder. Set a real PostgreSQL URL for local runs (e.g. postgres://user:pass@localhost:5432/db) or configure platform env vars.'
+        );
+      }
       this.pool = new Pool(
         connectionString
           ? {
@@ -81,6 +86,11 @@ export class Database {
       logger.info('PostgreSQL connected');
       await this.createTables();
     } catch (error) {
+      const maybeAggregate = error as { errors?: unknown[] };
+      if (Array.isArray(maybeAggregate.errors)) {
+        const innerErrors = maybeAggregate.errors.map((inner: unknown) => `${inner}`).join(' | ');
+        logger.error(`PostgreSQL aggregate connection errors: ${innerErrors}`);
+      }
       logger.error('Error connecting to PostgreSQL:', error);
       throw error;
     }
@@ -545,6 +555,19 @@ export class Database {
       );
     } catch (error) {
       logger.error('Error clearing alert media:', error);
+      throw error;
+    }
+  }
+
+  async disableChatWatchers(chatId: number): Promise<void> {
+    try {
+      await this.pool.query(
+        'DELETE FROM watched_tokens WHERE chat_id = $1',
+        [chatId]
+      );
+      logger.warn(`Disabled watchlist for chat ${chatId} after Telegram delivery failure`);
+    } catch (error) {
+      logger.error('Error disabling chat watchers:', error);
       throw error;
     }
   }

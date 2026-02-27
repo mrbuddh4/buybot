@@ -1,5 +1,3 @@
-import { truncateAddress } from './helpers';
-
 interface TransactionAlertData {
   type: 'buy' | 'sell';
   tokenAddress: string;
@@ -19,6 +17,7 @@ interface TransactionAlertData {
   walletHoldingsUsd?: string;
   positionLabel?: string;
   dexSource?: 'AMM' | 'HLPMM';
+  purchaseCurrencySymbol?: string;
 }
 
 function escapeHtml(value: string): string {
@@ -66,17 +65,6 @@ function formatUsdCompact(value: number): string {
   }).format(value);
 }
 
-function formatTokenAmount(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) {
-    return '0';
-  }
-
-  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(2)}B`;
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
-  if (value >= 1_000) return `${(value / 1_000).toFixed(2)}K`;
-  return value.toFixed(2);
-}
-
 export function formatTransactionAlert(data: TransactionAlertData): string {
   const action = data.type === 'buy' ? 'Buy' : 'Sell';
   const actionUpper = action.toUpperCase();
@@ -87,15 +75,13 @@ export function formatTransactionAlert(data: TransactionAlertData): string {
     data.iconMultiplier || 1,
     (data.buyIconPattern || '🟢⚔️').trim() || '🟢⚔️'
   );
-  const iconCount = getSwapIconCount(totalUsdValue, data.iconMultiplier || 1);
-  const arrowSymbol = data.type === 'buy' ? '⬆️' : '⬇️';
-  const arrowCount = Math.max(4, Math.ceil(iconCount / 2));
-  const arrowLine = arrowSymbol.repeat(arrowCount);
   const marketCapValue = parseFloat(data.marketCapUsd || '0');
   const marketCapText = formatUsdCompact(marketCapValue);
   const usdDisplay = `$${Math.max(0, Math.round(totalUsdValue)).toLocaleString()}`;
   const ethAmount = parseFloat(data.ethValue) || 0;
   const tokenAmount = parseFloat(data.amount) || 0;
+  const tokenUnitUsdPrice = parseFloat(data.priceInUsd) || 0;
+  const purchaseCurrencySymbol = data.purchaseCurrencySymbol || (data.dexSource === 'HLPMM' ? 'USID' : 'PAX');
   
   const explorerUrl = process.env.BLOCK_EXPLORER_URL || 'https://etherscan.io';
   const escapedTokenName = escapeHtml(data.tokenName);
@@ -110,16 +96,16 @@ export function formatTransactionAlert(data: TransactionAlertData): string {
   return `
 <b>BUY DETECTED ON PAXEER NETWORK${data.dexSource === 'HLPMM' ? ' (HLPMM)' : ''}</b>
 
-${arrowLine}
 ${usdDisplay} <a href="${tokenUrl}">${escapedTokenName}</a> ${actionUpper}!
 ${statusDots}
 
-➡️ ${data.dexSource === 'HLPMM' ? 'USID' : 'PAX'}: ${ethAmount.toFixed(4)} (${usdDisplay})
-⬅️ ${escapedTokenSymbol}: ${formatTokenAmount(tokenAmount)}
+➡️ ${escapeHtml(purchaseCurrencySymbol)}: ${ethAmount.toFixed(3)} (${usdDisplay})
+⬅️ ${escapedTokenSymbol}: ${tokenAmount.toFixed(3)}
 👤 <a href="${walletUrl}">Buyer</a> / <a href="${txUrl}">Txn</a>
 🅿️ Position: ${positionText}
 💼 Holdings: ${holdingsTokenText} ${escapedTokenSymbol} (${holdingsUsdText})
 
+💲 Token Price: $${tokenUnitUsdPrice.toFixed(3)} USDC
 📈 Market Cap: ${marketCapText} USDC
   `.trim();
 }
@@ -164,7 +150,7 @@ export function formatTokenInfo(data: {
 
 **Current Price:**
 • ${parseFloat(data.priceInEth).toFixed(8)} PAX
-• $${parseFloat(data.priceInUsd).toFixed(6)} USDC
+• $${parseFloat(data.priceInUsd).toFixed(3)} USDC
 
 **Market Cap:** ${marketCapText} USDC
 

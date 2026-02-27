@@ -28,12 +28,24 @@ export class MonitoringService {
   private isRunning: boolean = false;
   private monitoredTokens: Map<string, ethers.Contract> = new Map();
   private pollingInterval: NodeJS.Timeout | null = null;
+  private pollingInProgress: boolean = false;
   private lastBlockNumber: number = 0;
   private hlpmmEventEmitter: ethers.Contract | null = null;
   private hlpmmFactory: ethers.Contract | null = null;
   private hlpmmUsidAddress: string | null = null;
   private hlpmmPoolTokenCache: Map<string, string> = new Map();
   private hlpmmEnabled: boolean = false;
+  private disabledChats: Set<number> = new Set();
+  private readonly ammRouterInterface = new ethers.Interface([
+    'function swapExactETHForTokens(uint256 amountOutMin, address[] path, address to, uint256 deadline)',
+    'function swapExactETHForTokensSupportingFeeOnTransferTokens(uint256 amountOutMin, address[] path, address to, uint256 deadline)',
+    'function swapETHForExactTokens(uint256 amountOut, address[] path, address to, uint256 deadline)',
+    'function swapExactTokensForTokens(uint256 amountIn, uint256 amountOutMin, address[] path, address to, uint256 deadline)',
+    'function swapTokensForExactTokens(uint256 amountOut, uint256 amountInMax, address[] path, address to, uint256 deadline)',
+    'function swapExactTokensForETH(uint256 amountIn, uint256 amountOutMin, address[] path, address to, uint256 deadline)',
+    'function swapTokensForExactETH(uint256 amountOut, uint256 amountInMax, address[] path, address to, uint256 deadline)',
+    'function swapExactTokensForTokensSupportingFeeOnTransferTokens(uint256 amountIn, uint256 amountOutMin, address[] path, address to, uint256 deadline)',
+  ]);
 
   private constructor(bot: TelegramBot) {
     const rpcEndpoint = process.env.RPC_ENDPOINT!;
@@ -151,6 +163,11 @@ export class MonitoringService {
     
     // Poll for new blocks every 3 seconds
     this.pollingInterval = setInterval(async () => {
+      if (this.pollingInProgress) {
+        return;
+      }
+
+      this.pollingInProgress = true;
       try {
         const currentBlock = await this.provider.getBlockNumber();
         
@@ -194,6 +211,8 @@ export class MonitoringService {
         }
       } catch (error) {
         logger.error('Error in polling loop:', error);
+      } finally {
+        this.pollingInProgress = false;
       }
     }, 3000);
   }
@@ -226,8 +245,38 @@ export class MonitoringService {
     tokenAddress: string,
     walletAddress: string,
     currentTxHash: string,
-    upToBlock: number
+    upToBlock: number,
+    currentTxIndex: number
   ): Promise<boolean> {
+    const hasPriorInEvents = (events: any[], txHash: string, blockNumber: number, txIndex: number): boolean => {
+      const currentTx = txHash.toLowerCase();
+
+      return events.some((evt: any) => {
+        const evtTxHash = (evt?.transactionHash || evt?.log?.transactionHash || '').toLowerCase();
+        if (!evtTxHash || evtTxHash === currentTx) {
+          return false;
+        }
+
+        const evtBlock = Number(evt?.blockNumber ?? evt?.log?.blockNumber ?? -1);
+        const evtTxIndex = Number(evt?.transactionIndex ?? evt?.log?.transactionIndex ?? Number.MAX_SAFE_INTEGER);
+
+        if (evtBlock < blockNumber) {
+          return true;
+        }
+
+        if (evtBlock > blockNumber) {
+          return false;
+        }
+
+        return evtTxIndex < txIndex;
+      });
+    };
+
+    const isRangeLimitError = (error: unknown): boolean => {
+      const message = String(error || '').toLowerCase();
+      return message.includes('maximum [from, to] blocks distance') || message.includes('maximum from, to blocks distance');
+    };
+
     try {
       const interactionContract = new ethers.Contract(
         tokenAddress,
@@ -239,21 +288,37 @@ export class MonitoringService {
       const fromFilter = interactionContract.filters.Transfer(normalizedWallet, null);
       const toFilter = interactionContract.filters.Transfer(null, normalizedWallet);
 
-      const [fromEvents, toEvents] = await Promise.all([
-        interactionContract.queryFilter(fromFilter, 0, upToBlock),
-        interactionContract.queryFilter(toFilter, 0, upToBlock),
-      ]);
+      try {
+        const [fromEvents, toEvents] = await Promise.all([
+          interactionContract.queryFilter(fromFilter, 0, upToBlock),
+          interactionContract.queryFilter(toFilter, 0, upToBlock),
+        ]);
 
-      const currentTx = currentTxHash.toLowerCase();
-      const hasPrior = [...fromEvents, ...toEvents].some((evt: any) => {
-        const evtTxHash = (evt?.transactionHash || evt?.log?.transactionHash || '').toLowerCase();
-        return evtTxHash && evtTxHash !== currentTx;
-      });
+        return hasPriorInEvents([...fromEvents, ...toEvents], currentTxHash, upToBlock, currentTxIndex);
+      } catch (rangeError) {
+        if (!isRangeLimitError(rangeError)) {
+          throw rangeError;
+        }
 
-      return hasPrior;
+        const windowSize = 1000;
+
+        for (let end = upToBlock; end >= 0; end -= windowSize) {
+          const start = Math.max(0, end - windowSize + 1);
+          const [fromEvents, toEvents] = await Promise.all([
+            interactionContract.queryFilter(fromFilter, start, end),
+            interactionContract.queryFilter(toFilter, start, end),
+          ]);
+
+          if (hasPriorInEvents([...fromEvents, ...toEvents], currentTxHash, upToBlock, currentTxIndex)) {
+            return true;
+          }
+        }
+
+        return false;
+      }
     } catch (error) {
-      logger.warn(`Failed to check prior token interactions for ${walletAddress} on ${tokenAddress}; assuming prior interaction.`, error);
-      return true;
+      logger.warn(`Failed to check prior token interactions for ${walletAddress} on ${tokenAddress}; assuming no prior interaction.`, error);
+      return false;
     }
   }
 
@@ -265,6 +330,113 @@ export class MonitoringService {
     const pct = ((current - previous) / previous) * 100;
     const sign = pct >= 0 ? '+' : '';
     return `${sign}${pct.toFixed(2)}%`;
+  }
+
+  private isKickedChatError(error: unknown): boolean {
+    const message = String(error || '').toLowerCase();
+    return message.includes('bot was kicked') || message.includes('forbidden: bot was kicked');
+  }
+
+  private async resolveAmmPurchaseDetails(
+    tx: ethers.TransactionResponse,
+    boughtTokenAddress: string,
+    estimatedAmountFallback: string
+  ): Promise<{ symbol: string; amount: string }> {
+    const nativeSymbol = process.env.NATIVE_CURRENCY_SYMBOL || 'PAX';
+    const tokenAddressLower = boughtTokenAddress.toLowerCase();
+
+    try {
+      const parsed = this.ammRouterInterface.parseTransaction({ data: tx.data, value: tx.value });
+      if (!parsed) {
+        if (tx.value > 0n) {
+          return { symbol: nativeSymbol, amount: ethers.formatEther(tx.value) };
+        }
+        return { symbol: nativeSymbol, amount: estimatedAmountFallback };
+      }
+
+      const name = parsed.name;
+      const pathArg = name.includes('ETHFor') ? parsed.args[1] : parsed.args[2];
+      const path = Array.isArray(pathArg) ? (pathArg as string[]) : [];
+
+      if (path.length < 2 || path[path.length - 1].toLowerCase() !== tokenAddressLower) {
+        return { symbol: nativeSymbol, amount: estimatedAmountFallback };
+      }
+
+      const inputToken = path[0].toLowerCase();
+      let rawAmount: bigint | null = null;
+
+      if (name === 'swapExactETHForTokens' || name === 'swapExactETHForTokensSupportingFeeOnTransferTokens' || name === 'swapETHForExactTokens') {
+        rawAmount = tx.value;
+      } else if (name === 'swapExactTokensForTokens' || name === 'swapExactTokensForETH' || name === 'swapExactTokensForTokensSupportingFeeOnTransferTokens') {
+        rawAmount = parsed.args[0] as bigint;
+      } else if (name === 'swapTokensForExactTokens' || name === 'swapTokensForExactETH') {
+        rawAmount = parsed.args[1] as bigint;
+      }
+
+      if (!rawAmount || rawAmount <= 0n) {
+        return { symbol: nativeSymbol, amount: estimatedAmountFallback };
+      }
+
+      if (inputToken === this.wethAddress.toLowerCase()) {
+        return {
+          symbol: nativeSymbol,
+          amount: ethers.formatEther(rawAmount),
+        };
+      }
+
+      const inputTokenContract = new ethers.Contract(
+        inputToken,
+        [
+          'function symbol() view returns (string)',
+          'function decimals() view returns (uint8)',
+        ],
+        this.provider
+      );
+
+      const [inputSymbol, inputDecimals] = await Promise.all([
+        inputTokenContract.symbol(),
+        inputTokenContract.decimals(),
+      ]);
+
+      return {
+        symbol: inputSymbol,
+        amount: ethers.formatUnits(rawAmount, Number(inputDecimals)),
+      };
+    } catch {
+      return { symbol: nativeSymbol, amount: estimatedAmountFallback };
+    }
+  }
+
+  private async computePositionLabel(
+    tokenAddress: string,
+    walletAddress: string,
+    txHash: string,
+    blockNumber: number,
+    txIndex: number,
+    currentHoldingsNumeric: number,
+    deltaAmountNumeric: number
+  ): Promise<string> {
+    const previousSnapshot = await this.db.getTraderPosition(tokenAddress, walletAddress);
+    const previousHoldingsNumeric = parseFloat(previousSnapshot?.holdings_token || '0') || 0;
+
+    if (previousSnapshot && previousHoldingsNumeric > 0) {
+      return this.formatPositionPercent(currentHoldingsNumeric, previousHoldingsNumeric);
+    }
+
+    const hasPriorInteraction = await this.hasPriorTokenInteraction(
+      tokenAddress,
+      walletAddress,
+      txHash,
+      blockNumber,
+      txIndex
+    );
+
+    if (!hasPriorInteraction) {
+      return 'NEW';
+    }
+
+    const inferredPrevious = Math.max(0, currentHoldingsNumeric - deltaAmountNumeric);
+    return this.formatPositionPercent(currentHoldingsNumeric, inferredPrevious);
   }
 
   private async handleTransferEvent(
@@ -311,6 +483,7 @@ export class MonitoringService {
       const receipt = await this.provider.getTransactionReceipt(swapEvent.txHash);
 
       if (!tx || !receipt) return;
+      const txIndex = Number((receipt as any).index ?? Number.MAX_SAFE_INTEGER);
 
       // Calculate ETH value from transaction
       const ethValue = tx.value;
@@ -325,6 +498,7 @@ export class MonitoringService {
       const priceInUsdNumeric = parseFloat(price?.priceInUsd || '0');
       const tokenAmountNumeric = parseFloat(tokenAmount || '0');
       const estimatedEthValue = (tokenAmountNumeric * priceInEthNumeric).toString();
+      const purchaseDetails = await this.resolveAmmPurchaseDetails(tx, tokenAddress, estimatedEthValue);
       const totalUsdValue = tokenAmountNumeric * priceInUsdNumeric;
       const marketCapUsd = ((parseFloat(tokenInfo?.totalSupply || '0') || 0) * priceInUsdNumeric).toString();
 
@@ -338,33 +512,25 @@ export class MonitoringService {
       const currentHoldingsNumeric = parseFloat(currentHoldingsToken || '0') || 0;
       const currentHoldingsUsdNumeric = currentHoldingsNumeric * priceInUsdNumeric;
 
-      const previousSnapshot = await this.db.getTraderPosition(tokenAddress, trader);
-      const previousHoldingsNumeric = parseFloat(previousSnapshot?.holdings_token || '0') || 0;
-      let positionLabel = 'NEW';
+      const positionLabel = await this.computePositionLabel(
+        tokenAddress,
+        trader,
+        swapEvent.txHash,
+        swapEvent.blockNumber,
+        txIndex,
+        currentHoldingsNumeric,
+        tokenAmountNumeric
+      );
 
-      if (previousSnapshot && previousHoldingsNumeric > 0) {
-        positionLabel = this.formatPositionPercent(currentHoldingsNumeric, previousHoldingsNumeric);
-      } else {
-        const hasPriorInteraction = await this.hasPriorTokenInteraction(
-          tokenAddress,
-          trader,
-          swapEvent.txHash,
-          swapEvent.blockNumber
-        );
-
-        if (hasPriorInteraction) {
-          const inferredPrevious = type === 'buy'
-            ? Math.max(0, currentHoldingsNumeric - tokenAmountNumeric)
-            : currentHoldingsNumeric + tokenAmountNumeric;
-          positionLabel = this.formatPositionPercent(currentHoldingsNumeric, inferredPrevious);
-        }
-      }
+      logger.info(
+        `Computed position (AMM): token=${tokenInfo?.symbol || tokenAddress} trader=${trader} position=${positionLabel} tx=${swapEvent.txHash}`
+      );
 
       const holdingsTokenDisplay = currentHoldingsNumeric >= 1_000_000
-        ? `${(currentHoldingsNumeric / 1_000_000).toFixed(2)}M`
+        ? `${(currentHoldingsNumeric / 1_000_000).toFixed(3)}M`
         : currentHoldingsNumeric >= 1_000
-          ? `${(currentHoldingsNumeric / 1_000).toFixed(2)}K`
-          : currentHoldingsNumeric.toFixed(2);
+          ? `${(currentHoldingsNumeric / 1_000).toFixed(3)}K`
+          : currentHoldingsNumeric.toFixed(3);
       const holdingsUsdDisplay = `$${Math.max(0, Math.round(currentHoldingsUsdNumeric)).toLocaleString()}`;
 
       const alreadyDetected = await this.db.hasDetectedTransaction(swapEvent.txHash);
@@ -400,7 +566,7 @@ export class MonitoringService {
           tokenSymbol: tokenInfo?.symbol || 'UNKNOWN',
           tokenName: tokenInfo?.name || 'Unknown Token',
           amount: tokenAmount,
-          ethValue: estimatedEthValue,
+          ethValue: purchaseDetails.amount,
           priceInEth: price?.priceInEth || '0',
           priceInUsd: price?.priceInUsd || '0',
           marketCapUsd,
@@ -412,6 +578,7 @@ export class MonitoringService {
           buyer: trader,
           txHash: swapEvent.txHash,
           blockNumber: swapEvent.blockNumber,
+          purchaseCurrencySymbol: purchaseDetails.symbol,
         });
 
         const links = await this.db.getAlertLinks(watcher.chat_id);
@@ -473,6 +640,14 @@ export class MonitoringService {
           }
         } catch (error) {
           logger.error(`Failed to send notification to chat ${watcher.chat_id}:`, error);
+          if (this.isKickedChatError(error) && !this.disabledChats.has(watcher.chat_id)) {
+            this.disabledChats.add(watcher.chat_id);
+            try {
+              await this.db.disableChatWatchers(watcher.chat_id);
+            } catch (disableError) {
+              logger.error(`Failed to auto-disable kicked chat ${watcher.chat_id}:`, disableError);
+            }
+          }
         }
       }
 
@@ -528,6 +703,7 @@ export class MonitoringService {
 
       const txHash = event?.log?.transactionHash || event?.transactionHash;
       const blockNumber = event?.log?.blockNumber || event?.blockNumber;
+      const txIndex = Number(event?.log?.transactionIndex ?? event?.transactionIndex ?? Number.MAX_SAFE_INTEGER);
 
       if (!txHash || !blockNumber) return;
 
@@ -583,30 +759,25 @@ export class MonitoringService {
       const currentHoldingsNumeric = parseFloat(currentHoldingsToken || '0') || 0;
       const currentHoldingsUsdNumeric = currentHoldingsNumeric * parseFloat(effectivePriceInUsd);
 
-      const previousSnapshot = await this.db.getTraderPosition(tokenAddress, buyer);
-      const previousHoldingsNumeric = parseFloat(previousSnapshot?.holdings_token || '0') || 0;
-      let positionLabel = 'NEW';
+      const positionLabel = await this.computePositionLabel(
+        tokenAddress,
+        buyer,
+        txHash,
+        blockNumber,
+        txIndex,
+        currentHoldingsNumeric,
+        tokenAmountNumeric
+      );
 
-      if (previousSnapshot && previousHoldingsNumeric > 0) {
-        positionLabel = this.formatPositionPercent(currentHoldingsNumeric, previousHoldingsNumeric);
-      } else {
-        const hasPriorInteraction = await this.hasPriorTokenInteraction(
-          tokenAddress,
-          buyer,
-          txHash,
-          blockNumber
-        );
-        if (hasPriorInteraction) {
-          const inferredPrevious = Math.max(0, currentHoldingsNumeric - tokenAmountNumeric);
-          positionLabel = this.formatPositionPercent(currentHoldingsNumeric, inferredPrevious);
-        }
-      }
+      logger.info(
+        `Computed position (HLPMM): token=${tokenInfo?.symbol || tokenAddress} trader=${buyer} position=${positionLabel} tx=${txHash}`
+      );
 
       const holdingsTokenDisplay = currentHoldingsNumeric >= 1_000_000
-        ? `${(currentHoldingsNumeric / 1_000_000).toFixed(2)}M`
+        ? `${(currentHoldingsNumeric / 1_000_000).toFixed(3)}M`
         : currentHoldingsNumeric >= 1_000
-          ? `${(currentHoldingsNumeric / 1_000).toFixed(2)}K`
-          : currentHoldingsNumeric.toFixed(2);
+          ? `${(currentHoldingsNumeric / 1_000).toFixed(3)}K`
+          : currentHoldingsNumeric.toFixed(3);
       const holdingsUsdDisplay = `$${Math.max(0, Math.round(currentHoldingsUsdNumeric)).toLocaleString()}`;
 
       const watchers = await this.db.getTokenWatchers(tokenAddress);
@@ -647,6 +818,7 @@ export class MonitoringService {
           txHash,
           blockNumber,
           dexSource: 'HLPMM',
+          purchaseCurrencySymbol: 'USID',
         });
 
         const links = await this.db.getAlertLinks(watcher.chat_id);
@@ -708,6 +880,14 @@ export class MonitoringService {
           }
         } catch (error) {
           logger.error(`Failed to send HLPMM notification to chat ${watcher.chat_id}:`, error);
+          if (this.isKickedChatError(error) && !this.disabledChats.has(watcher.chat_id)) {
+            this.disabledChats.add(watcher.chat_id);
+            try {
+              await this.db.disableChatWatchers(watcher.chat_id);
+            } catch (disableError) {
+              logger.error(`Failed to auto-disable kicked chat ${watcher.chat_id}:`, disableError);
+            }
+          }
         }
       }
 

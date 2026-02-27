@@ -1,4 +1,5 @@
 import { ethers } from 'ethers';
+import axios from 'axios';
 import { logger } from '../utils/logger';
 
 export interface TokenPrice {
@@ -14,6 +15,8 @@ export class PriceService {
   private hlpmmQuoterAddress: string | null;
   private hlpmmFactoryAddress: string | null;
   private hlpmmUsidAddress: string | null;
+  private portfolioApiBaseUrl: string;
+  private paxUsdErrorLoggedAt: number = 0;
 
   constructor() {
     const rpcEndpoint = process.env.RPC_ENDPOINT!;
@@ -24,10 +27,78 @@ export class PriceService {
     this.hlpmmQuoterAddress = process.env.HLPMM_QUOTER_ADDRESS || null;
     this.hlpmmFactoryAddress = process.env.HLPMM_FACTORY_ADDRESS || null;
     this.hlpmmUsidAddress = process.env.HLPMM_USID_ADDRESS || null;
+    this.portfolioApiBaseUrl = (process.env.PORTFOLIO_API_BASE_URL || 'https://us-east-1.user-stats.sidiora.exchange').replace(/\/+$/, '');
+  }
+
+  private async getTokenFromPortfolioApi(tokenAddress: string): Promise<any | null> {
+    try {
+      const normalized = tokenAddress.toLowerCase();
+      const url = `${this.portfolioApiBaseUrl}/api/v1/tokens/${normalized}`;
+      const response = await axios.get(url, { timeout: 8000 });
+      return response.data || null;
+    } catch {
+      return null;
+    }
+  }
+
+  private parseNumericField(source: any, keys: string[]): number | null {
+    for (const key of keys) {
+      const raw = source?.[key];
+      const value = typeof raw === 'string' || typeof raw === 'number' ? parseFloat(String(raw)) : NaN;
+      if (Number.isFinite(value) && value > 0) {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  private async getTokenPriceFromPortfolioApi(tokenAddress: string): Promise<TokenPrice | null> {
+    const data = await this.getTokenFromPortfolioApi(tokenAddress);
+    if (!data) {
+      return null;
+    }
+
+    const usd = this.parseNumericField(data, [
+      'price_usd',
+      'priceUsd',
+      'current_price_usd',
+      'currentPriceUsd',
+      'usd_price',
+      'usdPrice',
+    ]);
+
+    const eth = this.parseNumericField(data, [
+      'price_in_eth',
+      'priceInEth',
+      'eth_price',
+      'ethPrice',
+    ]);
+
+    if (!usd && !eth) {
+      return null;
+    }
+
+    const paxUsdPrice = await this.getPaxUsdPrice(6);
+    const resolvedUsd = usd ?? ((eth || 0) * paxUsdPrice);
+    const resolvedEth = eth ?? (resolvedUsd > 0 && paxUsdPrice > 0 ? resolvedUsd / paxUsdPrice : 0);
+
+    if (!(resolvedUsd > 0) && !(resolvedEth > 0)) {
+      return null;
+    }
+
+    return {
+      priceInEth: resolvedEth.toFixed(8),
+      priceInUsd: resolvedUsd.toFixed(3),
+    };
   }
 
   async getTokenPrice(tokenAddress: string): Promise<TokenPrice | null> {
     try {
+      const apiPrice = await this.getTokenPriceFromPortfolioApi(tokenAddress);
+      if (apiPrice) {
+        return apiPrice;
+      }
+
       const routerABI = [
         'function getAmountsOut(uint amountIn, address[] memory path) public view returns (uint[] memory amounts)',
       ];
@@ -68,7 +139,7 @@ export class PriceService {
       }
 
       if (priceInUsd === '0' && priceInEth !== '0') {
-        priceInUsd = (parseFloat(priceInEth) * paxUsdPrice).toFixed(6);
+        priceInUsd = (parseFloat(priceInEth) * paxUsdPrice).toFixed(3);
       }
 
       if (priceInEth === '0' && priceInUsd !== '0') {
@@ -82,11 +153,12 @@ export class PriceService {
 
       return {
         priceInEth,
-        priceInUsd,
+        priceInUsd: parseFloat(priceInUsd || '0').toFixed(3),
       };
     } catch (error) {
       logger.error('Error getting token price from AMM:', error);
-      return this.getHLPMMTokenPrice(tokenAddress);
+      const fallbackPrice = await this.getHLPMMTokenPrice(tokenAddress);
+      return fallbackPrice;
     }
   }
 
@@ -118,7 +190,7 @@ export class PriceService {
 
       const spotPrice = await quoterContract.getSpotPrice(poolAddress);
       const priceInUsid = ethers.formatEther(spotPrice);
-      const priceInUsd = priceInUsid;
+      const priceInUsd = parseFloat(priceInUsid || '0').toFixed(3);
 
       const paxUsdPrice = await this.getPaxUsdPrice(6);
       const priceInEth = paxUsdPrice > 0
@@ -180,7 +252,11 @@ export class PriceService {
 
       return parseFloat(ethers.formatUnits(amounts[1], usdcDecimals));
     } catch (error) {
-      logger.error('Error getting PAX USD price:', error);
+      const now = Date.now();
+      if (now - this.paxUsdErrorLoggedAt >= 5 * 60 * 1000) {
+        this.paxUsdErrorLoggedAt = now;
+        logger.warn('PAX/USD quote unavailable from router; using fallback PAX_USD_PRICE.');
+      }
       const fallbackPrice = parseFloat(process.env.PAX_USD_PRICE || '11.51');
       return Number.isFinite(fallbackPrice) && fallbackPrice > 0 ? fallbackPrice : 11.51;
     }
@@ -193,6 +269,23 @@ export class PriceService {
     totalSupply: string;
   } | null> {
     try {
+      const apiToken = await this.getTokenFromPortfolioApi(tokenAddress);
+      if (apiToken) {
+        const name = apiToken?.name;
+        const symbol = apiToken?.symbol;
+        const decimals = Number(apiToken?.decimals);
+        const totalSupplyRaw = apiToken?.total_supply ?? apiToken?.totalSupply;
+
+        if (name && symbol && Number.isFinite(decimals)) {
+          return {
+            name: String(name),
+            symbol: String(symbol),
+            decimals,
+            totalSupply: totalSupplyRaw ? String(totalSupplyRaw) : '0',
+          };
+        }
+      }
+
       const tokenABI = [
         'function name() view returns (string)',
         'function symbol() view returns (string)',
