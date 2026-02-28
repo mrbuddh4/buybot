@@ -58,7 +58,7 @@ I'll notify you whenever tokens you're watching are bought or sold on the blockc
 /setwebsite <url> - Set alert Website button
 /settelegram <url> - Set alert Telegram button
 /setx <url> - Set alert X button
-/links - View current alert links
+/buylinks - View current alert links
 /clearlinks - Remove custom alert links
 /settings - Open group settings panel
 /help - Show all commands
@@ -89,7 +89,7 @@ Add me to a group to monitor tokens for everyone!
 /setwebsite <url> - Set alert Website button
 /settelegram <url> - Set alert Telegram button
 /setx <url> - Set alert X button
-/links - View current alert links
+/buylinks - View current alert links
 /clearlinks - Remove custom alert links
 /settings - Open settings panel
 
@@ -667,7 +667,7 @@ Updated: ${new Date().toLocaleString()}
         `🔗 Alert Button Links\n\nWebsite: ${website}\nTelegram: ${telegram}\nX: ${x}`
       );
     } catch (error) {
-      logger.error('Error handling /links command:', error);
+      logger.error('Error handling /buylinks command:', error);
       await this.bot.sendMessage(chatId, '❌ Failed to fetch links.');
     }
   }
