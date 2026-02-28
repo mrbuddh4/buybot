@@ -51,19 +51,49 @@ export class TelegramBot {
   }
 
   private setupCommands(): void {
-    this.bot.onText(/\/start/, (msg) => this.commandHandler.handleStart(msg));
-    this.bot.onText(/\/help/, (msg) => this.commandHandler.handleHelp(msg));
-    this.bot.onText(/\/settings/, (msg) => this.commandHandler.handleSettings(msg));
-    this.bot.onText(/\/watch (.+)/, (msg, match) => this.commandHandler.handleWatch(msg, match));
-    this.bot.onText(/\/unwatch (.+)/, (msg, match) => this.commandHandler.handleUnwatch(msg, match));
-    this.bot.onText(/\/watchlist/, (msg) => this.commandHandler.handleWatchlist(msg));
-    this.bot.onText(/\/info (.+)/, (msg, match) => this.commandHandler.handleInfo(msg, match));
-    this.bot.onText(/\/price (.+)/, (msg, match) => this.commandHandler.handlePrice(msg, match));
-    this.bot.onText(/\/setwebsite (.+)/, (msg, match) => this.commandHandler.handleSetWebsite(msg, match));
-    this.bot.onText(/\/settelegram (.+)/, (msg, match) => this.commandHandler.handleSetTelegram(msg, match));
-    this.bot.onText(/\/setx (.+)/, (msg, match) => this.commandHandler.handleSetX(msg, match));
-    this.bot.onText(/\/links/, (msg) => this.commandHandler.handleLinks(msg));
-    this.bot.onText(/\/clearlinks/, (msg) => this.commandHandler.handleClearLinks(msg));
+    this.bot.onText(/\/links(?:@[A-Za-z0-9_]+)?$/, () => {
+      // Intentionally ignored to avoid command collisions with other bots.
+    });
+
+    this.bot.onText(/\/start/, (msg) => {
+      void this.executeCommandIfAuthorized(msg, () => this.commandHandler.handleStart(msg));
+    });
+    this.bot.onText(/\/help/, (msg) => {
+      void this.executeCommandIfAuthorized(msg, () => this.commandHandler.handleHelp(msg));
+    });
+    this.bot.onText(/\/settings/, (msg) => {
+      void this.executeCommandIfAuthorized(msg, () => this.commandHandler.handleSettings(msg));
+    });
+    this.bot.onText(/\/watch (.+)/, (msg, match) => {
+      void this.executeCommandIfAuthorized(msg, () => this.commandHandler.handleWatch(msg, match));
+    });
+    this.bot.onText(/\/unwatch (.+)/, (msg, match) => {
+      void this.executeCommandIfAuthorized(msg, () => this.commandHandler.handleUnwatch(msg, match));
+    });
+    this.bot.onText(/\/watchlist/, (msg) => {
+      void this.executeCommandIfAuthorized(msg, () => this.commandHandler.handleWatchlist(msg));
+    });
+    this.bot.onText(/\/info (.+)/, (msg, match) => {
+      void this.executeCommandIfAuthorized(msg, () => this.commandHandler.handleInfo(msg, match));
+    });
+    this.bot.onText(/\/price (.+)/, (msg, match) => {
+      void this.executeCommandIfAuthorized(msg, () => this.commandHandler.handlePrice(msg, match));
+    });
+    this.bot.onText(/\/setwebsite (.+)/, (msg, match) => {
+      void this.executeCommandIfAuthorized(msg, () => this.commandHandler.handleSetWebsite(msg, match));
+    });
+    this.bot.onText(/\/settelegram (.+)/, (msg, match) => {
+      void this.executeCommandIfAuthorized(msg, () => this.commandHandler.handleSetTelegram(msg, match));
+    });
+    this.bot.onText(/\/setx (.+)/, (msg, match) => {
+      void this.executeCommandIfAuthorized(msg, () => this.commandHandler.handleSetX(msg, match));
+    });
+    this.bot.onText(/\/buylinks/, (msg) => {
+      void this.executeCommandIfAuthorized(msg, () => this.commandHandler.handleLinks(msg));
+    });
+    this.bot.onText(/\/clearlinks/, (msg) => {
+      void this.executeCommandIfAuthorized(msg, () => this.commandHandler.handleClearLinks(msg));
+    });
     this.bot.on('callback_query', (query) => this.commandHandler.handleCallbackQuery(query));
     this.bot.on('message', (msg) => this.commandHandler.handlePendingInput(msg));
     this.bot.on('new_chat_members', (msg) => {
@@ -80,6 +110,42 @@ export class TelegramBot {
     });
   }
 
+  private async executeCommandIfAuthorized(
+    msg: TelegramBotAPI.Message,
+    handler: () => Promise<void>
+  ): Promise<void> {
+    const chatType = msg.chat.type;
+    const userId = msg.from?.id;
+
+    if (!userId) {
+      return;
+    }
+
+    if (chatType === 'private') {
+      await handler();
+      return;
+    }
+
+    if (chatType !== 'group' && chatType !== 'supergroup') {
+      return;
+    }
+
+    try {
+      const member = await this.bot.getChatMember(msg.chat.id, userId);
+      const isAdmin = member.status === 'administrator' || member.status === 'creator';
+
+      if (!isAdmin) {
+        await this.bot.sendMessage(msg.chat.id, '❌ Only group admins can use bot commands.');
+        return;
+      }
+
+      await handler();
+    } catch (error) {
+      logger.error('Failed to validate command permissions:', error);
+      await this.bot.sendMessage(msg.chat.id, '❌ Unable to verify admin permissions right now.');
+    }
+  }
+
   private async registerCommandMenu(): Promise<void> {
     const privateCommands: TelegramBotAPI.BotCommand[] = [
       { command: 'start', description: 'Initialize the bot' },
@@ -89,7 +155,7 @@ export class TelegramBot {
       { command: 'info', description: 'Get token info' },
       { command: 'price', description: 'Check token price' },
       { command: 'settings', description: 'Open settings panel' },
-      { command: 'links', description: 'View alert button links' },
+      { command: 'buylinks', description: 'View alert button links' },
       { command: 'help', description: 'Show available commands' },
     ];
 
