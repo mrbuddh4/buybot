@@ -21,34 +21,6 @@ interface TransactionAlertData {
   purchaseCurrencySymbol?: string;
 }
 
-function resolveChartUrlTemplate(template: string, tokenAddress: string): string {
-  const tokenLower = tokenAddress.toLowerCase();
-  const encodedToken = encodeURIComponent(tokenAddress);
-  const encodedTokenLower = encodeURIComponent(tokenLower);
-
-  if (template.includes('{token}') || template.includes('{tokenLower}')) {
-    return template
-      .replace(/\{token\}/g, encodedToken)
-      .replace(/\{tokenLower\}/g, encodedTokenLower);
-  }
-
-  const normalizedTemplate = template.replace(/\/+$/, '');
-  return `${normalizedTemplate}/${encodedToken}`;
-}
-
-function getChartUrl(tokenAddress: string, dexSource?: 'AMM' | 'HLPMM'): string {
-  const sidioraTemplate = process.env.SIDIORA_CHART_URL_TEMPLATE || 'https://app.hyperpaxeer.com/?outputCurrency={token}';
-  const paxfunTemplate = process.env.PAXFUN_CHART_URL_TEMPLATE || 'https://paxfun.io/token/{token}';
-
-  const selectedTemplate = dexSource === 'HLPMM' ? paxfunTemplate : sidioraTemplate;
-  return resolveChartUrlTemplate(selectedTemplate, tokenAddress);
-}
-
-function buildAlertFooterLinks(tokenAddress: string, dexSource?: 'AMM' | 'HLPMM'): string {
-  const chartUrl = getChartUrl(tokenAddress, dexSource);
-  return `📊 <a href="${chartUrl}">Chart</a>`;
-}
-
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -62,17 +34,17 @@ function getSwapIconCount(usdValue: number, iconMultiplier: number = 1): number 
   const value = Number.isFinite(usdValue) ? Math.max(0, usdValue) : 0;
 
   let iconCount = 1;
-  if (value >= 10000) iconCount = 16;
-  else if (value >= 5000) iconCount = 14;
-  else if (value >= 2500) iconCount = 12;
-  else if (value >= 1000) iconCount = 10;
-  else if (value >= 500) iconCount = 8;
-  else if (value >= 250) iconCount = 6;
-  else if (value >= 100) iconCount = 4;
-  else if (value >= 50) iconCount = 2;
+  if (value >= 10000) iconCount = 32;
+  else if (value >= 5000) iconCount = 28;
+  else if (value >= 2500) iconCount = 24;
+  else if (value >= 1000) iconCount = 20;
+  else if (value >= 500) iconCount = 16;
+  else if (value >= 250) iconCount = 12;
+  else if (value >= 100) iconCount = 8;
+  else if (value >= 50) iconCount = 4;
 
   const multiplier = Number.isFinite(iconMultiplier) ? Math.max(1, iconMultiplier) : 1;
-  return Math.max(1, Math.round(iconCount * multiplier));
+  return Math.min(32, Math.max(1, Math.round(iconCount * multiplier)));
 }
 
 function getSwapIcons(type: 'buy' | 'sell', usdValue: number, iconMultiplier: number = 1, buyIconPattern: string = '🟢⚔️'): string {
@@ -148,7 +120,6 @@ export function formatTransactionAlert(data: TransactionAlertData): string {
   const holdingsUsdText = data.walletHoldingsUsd || '$0';
   const walletTotalUsdText = data.walletTotalUsd || 'N/A';
   const positionText = data.positionLabel || 'NEW';
-  const footerLinks = buildAlertFooterLinks(data.tokenAddress, data.dexSource);
   
   return `
 <b>BUY DETECTED ON PAXEER NETWORK${data.dexSource === 'HLPMM' ? ' (PaxFun)' : ''}</b>
@@ -165,8 +136,6 @@ ${statusDots}
 
 💲 Token Price: ${tokenUnitUsdPriceText} USDC
 📈 Market Cap: ${marketCapText} USDC
-
-${footerLinks}
   `.trim();
 }
 
