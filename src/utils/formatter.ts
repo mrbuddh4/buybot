@@ -37,7 +37,7 @@ function resolveChartUrlTemplate(template: string, tokenAddress: string): string
 }
 
 function getChartUrl(tokenAddress: string, dexSource?: 'AMM' | 'HLPMM'): string {
-  const sidioraTemplate = process.env.SIDIORA_CHART_URL_TEMPLATE || 'https://swap.sidiora.xyz/?outputCurrency={token}';
+  const sidioraTemplate = process.env.SIDIORA_CHART_URL_TEMPLATE || 'https://trade.sidiora.xyz/?outputCurrency={token}';
   const paxfunTemplate = process.env.PAXFUN_CHART_URL_TEMPLATE || 'https://paxfun.io/token/{token}';
 
   const selectedTemplate = dexSource === 'HLPMM' ? paxfunTemplate : sidioraTemplate;
@@ -165,6 +165,7 @@ ${statusDots}
 
 💲 Token Price: ${tokenUnitUsdPriceText} USDC
 📈 Market Cap: ${marketCapText} USDC
+
 ${footerLinks}
   `.trim();
 }
