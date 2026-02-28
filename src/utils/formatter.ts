@@ -96,7 +96,7 @@ export function formatTransactionAlert(data: TransactionAlertData): string {
   return `
 <b>BUY DETECTED ON PAXEER NETWORK${data.dexSource === 'HLPMM' ? ' (HLPMM)' : ''}</b>
 
-${usdDisplay} <a href="${tokenUrl}">${escapedTokenName}</a> ${actionUpper}!
+<a href="${tokenUrl}">${escapedTokenName}</a> ${actionUpper}!
 ${statusDots}
 
 ➡️ ${escapeHtml(purchaseCurrencySymbol)}: ${ethAmount.toFixed(3)} (${usdDisplay})
