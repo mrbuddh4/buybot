@@ -74,6 +74,8 @@ ENCRYPTION_KEY=your_32_character_encryption_key_here
 - `CHAIN_ID` - Network chain ID
 - `ETHERSCAN_API_KEY` - For enhanced blockchain data
 - `COINGECKO_API_KEY` - For better price feeds
+- `SIDIORA_CHART_URL_TEMPLATE` - AMM alert chart link template (supports `{token}` and `{tokenLower}`)
+- `PAXFUN_CHART_URL_TEMPLATE` - HLPMM alert chart link template (supports `{token}` and `{tokenLower}`)
 
 ## Usage
 

@@ -15,9 +15,38 @@ interface TransactionAlertData {
   buyIconPattern?: string;
   walletHoldingsToken?: string;
   walletHoldingsUsd?: string;
+  walletTotalUsd?: string;
   positionLabel?: string;
   dexSource?: 'AMM' | 'HLPMM';
   purchaseCurrencySymbol?: string;
+}
+
+function resolveChartUrlTemplate(template: string, tokenAddress: string): string {
+  const tokenLower = tokenAddress.toLowerCase();
+  const encodedToken = encodeURIComponent(tokenAddress);
+  const encodedTokenLower = encodeURIComponent(tokenLower);
+
+  if (template.includes('{token}') || template.includes('{tokenLower}')) {
+    return template
+      .replace(/\{token\}/g, encodedToken)
+      .replace(/\{tokenLower\}/g, encodedTokenLower);
+  }
+
+  const normalizedTemplate = template.replace(/\/+$/, '');
+  return `${normalizedTemplate}/${encodedToken}`;
+}
+
+function getChartUrl(tokenAddress: string, dexSource?: 'AMM' | 'HLPMM'): string {
+  const sidioraTemplate = process.env.SIDIORA_CHART_URL_TEMPLATE || 'https://swap.sidiora.xyz/?outputCurrency={token}';
+  const paxfunTemplate = process.env.PAXFUN_CHART_URL_TEMPLATE || 'https://paxfun.io/token/{token}';
+
+  const selectedTemplate = dexSource === 'HLPMM' ? paxfunTemplate : sidioraTemplate;
+  return resolveChartUrlTemplate(selectedTemplate, tokenAddress);
+}
+
+function buildAlertFooterLinks(tokenAddress: string, dexSource?: 'AMM' | 'HLPMM'): string {
+  const chartUrl = getChartUrl(tokenAddress, dexSource);
+  return `📊 <a href="${chartUrl}">Chart</a>`;
 }
 
 function escapeHtml(value: string): string {
@@ -65,6 +94,32 @@ function formatUsdCompact(value: number): string {
   }).format(value);
 }
 
+function formatTokenUsdPrice(value: string): string {
+  const numeric = parseFloat(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return '$0.00';
+  }
+
+  if (numeric >= 1) {
+    return `$${numeric.toFixed(3)}`;
+  }
+
+  const cleaned = String(value).trim();
+  if (/^\d+(\.\d+)?$/.test(cleaned)) {
+    const trimmed = cleaned.replace(/0+$/, '').replace(/\.$/, '');
+    if (trimmed && trimmed !== '0') {
+      return `$${trimmed}`;
+    }
+  }
+
+  const fallback = numeric.toLocaleString('en-US', {
+    useGrouping: false,
+    minimumSignificantDigits: 2,
+    maximumSignificantDigits: 8,
+  });
+  return `$${fallback}`;
+}
+
 export function formatTransactionAlert(data: TransactionAlertData): string {
   const action = data.type === 'buy' ? 'Buy' : 'Sell';
   const actionUpper = action.toUpperCase();
@@ -80,7 +135,7 @@ export function formatTransactionAlert(data: TransactionAlertData): string {
   const usdDisplay = `$${Math.max(0, Math.round(totalUsdValue)).toLocaleString()}`;
   const ethAmount = parseFloat(data.ethValue) || 0;
   const tokenAmount = parseFloat(data.amount) || 0;
-  const tokenUnitUsdPrice = parseFloat(data.priceInUsd) || 0;
+  const tokenUnitUsdPriceText = formatTokenUsdPrice(data.priceInUsd);
   const purchaseCurrencySymbol = data.purchaseCurrencySymbol || (data.dexSource === 'HLPMM' ? 'USID' : 'PAX');
   
   const explorerUrl = process.env.BLOCK_EXPLORER_URL || 'https://etherscan.io';
@@ -91,10 +146,12 @@ export function formatTransactionAlert(data: TransactionAlertData): string {
   const txUrl = `${explorerUrl}/tx/${data.txHash}`;
   const holdingsTokenText = data.walletHoldingsToken || '0';
   const holdingsUsdText = data.walletHoldingsUsd || '$0';
+  const walletTotalUsdText = data.walletTotalUsd || 'N/A';
   const positionText = data.positionLabel || 'NEW';
+  const footerLinks = buildAlertFooterLinks(data.tokenAddress, data.dexSource);
   
   return `
-<b>BUY DETECTED ON PAXEER NETWORK${data.dexSource === 'HLPMM' ? ' (HLPMM)' : ''}</b>
+<b>BUY DETECTED ON PAXEER NETWORK${data.dexSource === 'HLPMM' ? ' (PaxFun)' : ''}</b>
 
 <a href="${tokenUrl}">${escapedTokenName}</a> ${actionUpper}!
 ${statusDots}
@@ -103,10 +160,12 @@ ${statusDots}
 ⬅️ ${escapedTokenSymbol}: ${tokenAmount.toFixed(3)}
 👤 <a href="${walletUrl}">Buyer</a> / <a href="${txUrl}">Txn</a>
 🅿️ Position: ${positionText}
-💼 Holdings: ${holdingsTokenText} ${escapedTokenSymbol} (${holdingsUsdText})
+💵 Wallet Value: ${walletTotalUsdText}
+💼 Holdings: ${holdingsUsdText} (${holdingsTokenText} ${escapedTokenSymbol})
 
-💲 Token Price: $${tokenUnitUsdPrice.toFixed(3)} USDC
+💲 Token Price: ${tokenUnitUsdPriceText} USDC
 📈 Market Cap: ${marketCapText} USDC
+${footerLinks}
   `.trim();
 }
 
@@ -150,7 +209,7 @@ export function formatTokenInfo(data: {
 
 **Current Price:**
 • ${parseFloat(data.priceInEth).toFixed(8)} PAX
-• $${parseFloat(data.priceInUsd).toFixed(3)} USDC
+• ${formatTokenUsdPrice(data.priceInUsd)} USDC
 
 **Market Cap:** ${marketCapText} USDC
 

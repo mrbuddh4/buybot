@@ -518,7 +518,8 @@ export class MonitoringService {
       const estimatedEthValue = (tokenAmountNumeric * priceInEthNumeric).toString();
       const purchaseDetails = await this.resolveAmmPurchaseDetails(tx, tokenAddress, estimatedEthValue);
       const totalUsdValue = tokenAmountNumeric * priceInUsdNumeric;
-      const marketCapUsd = ((parseFloat(tokenInfo?.totalSupply || '0') || 0) * priceInUsdNumeric).toString();
+      const marketCapUsd = tokenInfo?.marketCapUsd
+        || ((parseFloat(tokenInfo?.totalSupply || '0') || 0) * priceInUsdNumeric).toString();
 
       const balanceContract = new ethers.Contract(
         tokenAddress,
@@ -550,6 +551,10 @@ export class MonitoringService {
           ? `${(currentHoldingsNumeric / 1_000).toFixed(3)}K`
           : currentHoldingsNumeric.toFixed(3);
       const holdingsUsdDisplay = `$${Math.max(0, Math.round(currentHoldingsUsdNumeric)).toLocaleString()}`;
+      const walletTotalUsdNumeric = await this.priceService.getWalletTotalUsd(trader);
+      const walletTotalUsdDisplay = walletTotalUsdNumeric !== null
+        ? `$${Math.max(0, Math.round(walletTotalUsdNumeric)).toLocaleString()}`
+        : 'N/A';
 
       const alreadyDetected = await this.db.hasDetectedTransaction(swapEvent.txHash);
       if (alreadyDetected) {
@@ -592,10 +597,12 @@ export class MonitoringService {
           buyIconPattern: settings.buy_icon_pattern,
           walletHoldingsToken: holdingsTokenDisplay,
           walletHoldingsUsd: holdingsUsdDisplay,
+          walletTotalUsd: walletTotalUsdDisplay,
           positionLabel,
           buyer: trader,
           txHash: swapEvent.txHash,
           blockNumber: swapEvent.blockNumber,
+          dexSource: 'AMM',
           purchaseCurrencySymbol: purchaseDetails.symbol,
         });
 
@@ -757,14 +764,15 @@ export class MonitoringService {
 
       const price = await this.priceService.getTokenPrice(tokenAddress);
       const effectivePriceInUsd = priceInUsdNumeric > 0
-        ? priceInUsdNumeric.toFixed(6)
+        ? String(priceInUsdNumeric)
         : (price?.priceInUsd || '0');
       const effectivePriceInEth = price?.priceInEth || '0';
 
       const totalUsdValue = usidAmountNumeric;
 
       const hlpmmMarketCap = await this.priceService.getHLPMMMarketCap(tokenAddress);
-      const marketCapUsd = hlpmmMarketCap
+      const marketCapUsd = tokenInfo?.marketCapUsd
+        || hlpmmMarketCap
         || ((parseFloat(tokenInfo?.totalSupply || '0') || 0) * parseFloat(effectivePriceInUsd)).toString();
 
       const balanceContract = new ethers.Contract(
@@ -797,6 +805,10 @@ export class MonitoringService {
           ? `${(currentHoldingsNumeric / 1_000).toFixed(3)}K`
           : currentHoldingsNumeric.toFixed(3);
       const holdingsUsdDisplay = `$${Math.max(0, Math.round(currentHoldingsUsdNumeric)).toLocaleString()}`;
+      const walletTotalUsdNumeric = await this.priceService.getWalletTotalUsd(buyer);
+      const walletTotalUsdDisplay = walletTotalUsdNumeric !== null
+        ? `$${Math.max(0, Math.round(walletTotalUsdNumeric)).toLocaleString()}`
+        : 'N/A';
 
       const watchers = await this.db.getTokenWatchers(tokenAddress);
       if (watchers.length === 0) {
@@ -831,6 +843,7 @@ export class MonitoringService {
           buyIconPattern: settings.buy_icon_pattern,
           walletHoldingsToken: holdingsTokenDisplay,
           walletHoldingsUsd: holdingsUsdDisplay,
+          walletTotalUsd: walletTotalUsdDisplay,
           positionLabel,
           buyer,
           txHash,

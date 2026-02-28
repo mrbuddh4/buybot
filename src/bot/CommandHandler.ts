@@ -561,7 +561,7 @@ You'll receive alerts for all buy transactions!
         return;
       }
 
-      const marketCapUsd = (
+      const marketCapUsd = tokenInfo.marketCapUsd || (
         (parseFloat(tokenInfo.totalSupply || '0') || 0) *
         (parseFloat(price?.priceInUsd || '0') || 0)
       ).toString();
@@ -605,9 +605,10 @@ You'll receive alerts for all buy transactions!
       const price = await this.priceService.getTokenPrice(tokenAddress);
 
       if (price && tokenInfo) {
-        const marketCapUsd =
-          (parseFloat(tokenInfo.totalSupply || '0') || 0) *
-          (parseFloat(price.priceInUsd || '0') || 0);
+        const marketCapUsd = tokenInfo.marketCapUsd
+          ? parseFloat(tokenInfo.marketCapUsd)
+          : (parseFloat(tokenInfo.totalSupply || '0') || 0) *
+            (parseFloat(price.priceInUsd || '0') || 0);
         const marketCapCompact = new Intl.NumberFormat('en-US', {
           style: 'currency',
           currency: 'USD',
