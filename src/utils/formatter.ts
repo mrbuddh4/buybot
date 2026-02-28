@@ -35,13 +35,13 @@ function getSwapIconCount(usdValue: number, iconMultiplier: number = 1): number 
 
   let iconCount = 1;
   if (value >= 10000) iconCount = 32;
-  else if (value >= 5000) iconCount = 28;
-  else if (value >= 2500) iconCount = 24;
-  else if (value >= 1000) iconCount = 20;
-  else if (value >= 500) iconCount = 16;
-  else if (value >= 250) iconCount = 12;
-  else if (value >= 100) iconCount = 8;
-  else if (value >= 50) iconCount = 4;
+  else if (value >= 5000) iconCount = 24;
+  else if (value >= 2500) iconCount = 18;
+  else if (value >= 1000) iconCount = 14;
+  else if (value >= 500) iconCount = 11;
+  else if (value >= 250) iconCount = 8;
+  else if (value >= 100) iconCount = 5;
+  else if (value >= 50) iconCount = 3;
 
   const multiplier = Number.isFinite(iconMultiplier) ? Math.max(1, iconMultiplier) : 1;
   return Math.min(32, Math.max(1, Math.round(iconCount * multiplier)));
