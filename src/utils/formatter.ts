@@ -122,7 +122,7 @@ export function formatTransactionAlert(data: TransactionAlertData): string {
   const positionText = data.positionLabel || 'NEW';
   
   return `
-<b>BUY DETECTED ON PAXEER NETWORK${data.dexSource === 'HLPMM' ? ' (PaxFun)' : ''}</b>
+<b>🚨 BUY DETECTED ON PAXEER NETWORK${data.dexSource === 'HLPMM' ? ' (PaxFun)' : ''} 🚨</b>
 
 <a href="${tokenUrl}">${escapedTokenName}</a> ${actionUpper}!
 ${statusDots}
