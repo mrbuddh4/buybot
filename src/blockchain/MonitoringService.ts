@@ -245,6 +245,10 @@ export class MonitoringService {
       if (normalizedTo === normalizedTxFrom) {
         return { type: 'buy', trader: to };
       }
+
+      if (normalizedFrom === normalizedTxFrom) {
+        return { type: 'sell', trader: from };
+      }
     }
 
     return null;
