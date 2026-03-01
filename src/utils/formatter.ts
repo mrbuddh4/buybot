@@ -31,6 +31,8 @@ interface HourlyStatusData {
   sellers24h: number | null;
   holders: number | null;
   biggestBuy24hUsd: number | null;
+  sinceStartVolumeUsd?: number | null;
+  sinceStartBiggestBuyUsd?: number | null;
 }
 
 function escapeHtml(value: string): string {
@@ -192,6 +194,14 @@ export function formatHourlyStatusUpdate(data: HourlyStatusData): string {
 
   if (data.biggestBuy24hUsd !== null) {
     lines.push(`🏆 Biggest Buy (24h): ${formatUsdCompact(data.biggestBuy24hUsd)} USDC`);
+  }
+
+  if ((data.volume24hUsd === null || data.biggestBuy24hUsd === null) && data.sinceStartVolumeUsd !== null && data.sinceStartVolumeUsd !== undefined) {
+    const sinceStartParts: string[] = [`Volume ${formatUsdCompact(data.sinceStartVolumeUsd)} USDC`];
+    if (data.sinceStartBiggestBuyUsd !== null && data.sinceStartBiggestBuyUsd !== undefined) {
+      sinceStartParts.push(`Biggest Buy ${formatUsdCompact(data.sinceStartBiggestBuyUsd)} USDC`);
+    }
+    lines.push(`🕒 Since Start: ${sinceStartParts.join(' · ')}`);
   }
 
   if (lines.length === 0) {

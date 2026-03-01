@@ -41,6 +41,11 @@ export interface RecentTokenActivitySummary {
   holdersEstimate: number | null;
 }
 
+export interface TokenActivityAllTimeSummary {
+  volumeAllTimeUsd: number | null;
+  biggestBuyAllTimeUsd: number | null;
+}
+
 export interface AlertLinks {
   website_url: string | null;
   telegram_url: string | null;
@@ -493,6 +498,34 @@ export class Database {
         sellers24h: null,
         biggestBuy24hUsd: null,
         holdersEstimate: null,
+      };
+    }
+  }
+
+  async getTokenActivitySummaryAllTime(tokenAddress: string): Promise<TokenActivityAllTimeSummary> {
+    try {
+      const { rows } = await this.pool.query(
+        `SELECT
+           SUM(transaction_value_usd) AS volume_all_time_usd,
+           MAX(CASE WHEN type = 'buy' THEN transaction_value_usd END) AS biggest_buy_all_time_usd
+         FROM detected_transactions
+         WHERE token_address = $1`,
+        [tokenAddress.toLowerCase()]
+      );
+
+      const row = rows[0] || {};
+      const volumeAllTimeUsd = Number(row.volume_all_time_usd);
+      const biggestBuyAllTimeUsd = Number(row.biggest_buy_all_time_usd);
+
+      return {
+        volumeAllTimeUsd: Number.isFinite(volumeAllTimeUsd) && volumeAllTimeUsd > 0 ? volumeAllTimeUsd : null,
+        biggestBuyAllTimeUsd: Number.isFinite(biggestBuyAllTimeUsd) && biggestBuyAllTimeUsd > 0 ? biggestBuyAllTimeUsd : null,
+      };
+    } catch (error) {
+      logger.error('Error getting token all-time activity summary:', error);
+      return {
+        volumeAllTimeUsd: null,
+        biggestBuyAllTimeUsd: null,
       };
     }
   }
