@@ -110,6 +110,19 @@ function formatTokenUsdPrice(value: string): string {
   return `$${fallback}`;
 }
 
+function parseUsdDisplay(value?: string): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const numeric = parseFloat(String(value).replace(/[^0-9.\-]/g, ''));
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return null;
+  }
+
+  return numeric;
+}
+
 export function formatTransactionAlert(data: TransactionAlertData): string {
   const action = data.type === 'buy' ? 'Buy' : 'Sell';
   const actionUpper = action.toUpperCase();
@@ -136,7 +149,14 @@ export function formatTransactionAlert(data: TransactionAlertData): string {
   const txUrl = `${explorerUrl}/tx/${data.txHash}`;
   const holdingsTokenText = data.walletHoldingsToken || '0';
   const holdingsUsdText = data.walletHoldingsUsd || '$0';
-  const walletTotalUsdText = data.walletTotalUsd || 'N/A';
+  const holdingsUsdNumeric = parseUsdDisplay(holdingsUsdText);
+  const walletTotalUsdNumeric = parseUsdDisplay(data.walletTotalUsd);
+  const effectiveWalletTotalUsd = holdingsUsdNumeric !== null
+    ? Math.max(holdingsUsdNumeric, walletTotalUsdNumeric ?? 0)
+    : walletTotalUsdNumeric;
+  const walletTotalUsdText = effectiveWalletTotalUsd !== null
+    ? `$${Math.round(effectiveWalletTotalUsd).toLocaleString()}`
+    : 'N/A';
   const positionText = data.positionLabel || 'NEW';
   
   return `
