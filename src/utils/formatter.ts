@@ -25,6 +25,7 @@ interface HourlyStatusData {
   tokenAddress: string;
   tokenName: string;
   tokenSymbol: string;
+  tokenPriceUsd: number | null;
   marketCapUsd: number | null;
   volume24hUsd: number | null;
   buyers24h: number | null;
@@ -33,6 +34,8 @@ interface HourlyStatusData {
   biggestBuy24hUsd: number | null;
   sinceStartVolumeUsd?: number | null;
   sinceStartBiggestBuyUsd?: number | null;
+  sinceStartBuyTxCount?: number;
+  sinceStartSellTxCount?: number;
 }
 
 function escapeHtml(value: string): string {
@@ -165,6 +168,10 @@ export function formatHourlyStatusUpdate(data: HourlyStatusData): string {
     lines.push(`📈 Market Cap: ${formatUsdCompact(data.marketCapUsd)} USDC`);
   }
 
+  if (data.tokenPriceUsd !== null) {
+    lines.push(`💲 Price: ${formatTokenUsdPrice(String(data.tokenPriceUsd))} USDC`);
+  }
+
   if (data.volume24hUsd !== null) {
     lines.push(`📊 24h Volume: ${formatUsdCompact(data.volume24hUsd)} USDC`);
   }
@@ -196,12 +203,26 @@ export function formatHourlyStatusUpdate(data: HourlyStatusData): string {
     lines.push(`🏆 Biggest Buy (24h): ${formatUsdCompact(data.biggestBuy24hUsd)} USDC`);
   }
 
-  if ((data.volume24hUsd === null || data.biggestBuy24hUsd === null) && data.sinceStartVolumeUsd !== null && data.sinceStartVolumeUsd !== undefined) {
-    const sinceStartParts: string[] = [`Volume ${formatUsdCompact(data.sinceStartVolumeUsd)} USDC`];
+  if (data.volume24hUsd === null || data.biggestBuy24hUsd === null) {
+    const sinceStartParts: string[] = [];
+
+    if (data.sinceStartVolumeUsd !== null && data.sinceStartVolumeUsd !== undefined) {
+      sinceStartParts.push(`Volume ${formatUsdCompact(data.sinceStartVolumeUsd)} USDC`);
+    }
+
     if (data.sinceStartBiggestBuyUsd !== null && data.sinceStartBiggestBuyUsd !== undefined) {
       sinceStartParts.push(`Biggest Buy ${formatUsdCompact(data.sinceStartBiggestBuyUsd)} USDC`);
     }
-    lines.push(`🕒 Since Start: ${sinceStartParts.join(' · ')}`);
+
+    const buyCount = Math.max(0, Math.floor(data.sinceStartBuyTxCount || 0));
+    const sellCount = Math.max(0, Math.floor(data.sinceStartSellTxCount || 0));
+    if (buyCount > 0 || sellCount > 0) {
+      sinceStartParts.push(`${buyCount} buys / ${sellCount} sells`);
+    }
+
+    if (sinceStartParts.length > 0) {
+      lines.push(`🕒 Since Start: ${sinceStartParts.join(' · ')}`);
+    }
   }
 
   if (lines.length === 0) {

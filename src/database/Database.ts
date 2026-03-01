@@ -44,6 +44,8 @@ export interface RecentTokenActivitySummary {
 export interface TokenActivityAllTimeSummary {
   volumeAllTimeUsd: number | null;
   biggestBuyAllTimeUsd: number | null;
+  buyTxCountAllTime: number;
+  sellTxCountAllTime: number;
 }
 
 export interface AlertLinks {
@@ -507,7 +509,9 @@ export class Database {
       const { rows } = await this.pool.query(
         `SELECT
            SUM(transaction_value_usd) AS volume_all_time_usd,
-           MAX(CASE WHEN type = 'buy' THEN transaction_value_usd END) AS biggest_buy_all_time_usd
+           MAX(CASE WHEN type = 'buy' THEN transaction_value_usd END) AS biggest_buy_all_time_usd,
+           COUNT(*) FILTER (WHERE type = 'buy') AS buy_tx_count_all_time,
+           COUNT(*) FILTER (WHERE type = 'sell') AS sell_tx_count_all_time
          FROM detected_transactions
          WHERE token_address = $1`,
         [tokenAddress.toLowerCase()]
@@ -516,16 +520,22 @@ export class Database {
       const row = rows[0] || {};
       const volumeAllTimeUsd = Number(row.volume_all_time_usd);
       const biggestBuyAllTimeUsd = Number(row.biggest_buy_all_time_usd);
+      const buyTxCountAllTime = Number(row.buy_tx_count_all_time);
+      const sellTxCountAllTime = Number(row.sell_tx_count_all_time);
 
       return {
         volumeAllTimeUsd: Number.isFinite(volumeAllTimeUsd) && volumeAllTimeUsd > 0 ? volumeAllTimeUsd : null,
         biggestBuyAllTimeUsd: Number.isFinite(biggestBuyAllTimeUsd) && biggestBuyAllTimeUsd > 0 ? biggestBuyAllTimeUsd : null,
+        buyTxCountAllTime: Number.isFinite(buyTxCountAllTime) ? Math.max(0, Math.floor(buyTxCountAllTime)) : 0,
+        sellTxCountAllTime: Number.isFinite(sellTxCountAllTime) ? Math.max(0, Math.floor(sellTxCountAllTime)) : 0,
       };
     } catch (error) {
       logger.error('Error getting token all-time activity summary:', error);
       return {
         volumeAllTimeUsd: null,
         biggestBuyAllTimeUsd: null,
+        buyTxCountAllTime: 0,
+        sellTxCountAllTime: 0,
       };
     }
   }

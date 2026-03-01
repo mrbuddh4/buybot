@@ -1068,8 +1068,9 @@ export class MonitoringService {
           continue;
         }
 
-        const [tokenInfo, metrics, largestRecentBuy, activitySummary, allTimeSummary] = await Promise.all([
+        const [tokenInfo, tokenPrice, metrics, largestRecentBuy, activitySummary, allTimeSummary] = await Promise.all([
           this.priceService.getTokenInfo(tokenAddress),
+          this.priceService.getTokenPrice(tokenAddress),
           this.priceService.getTokenStatusMetrics(tokenAddress),
           this.db.getLargestRecentBuyUsd(tokenAddress, 24),
           this.db.getRecentTokenActivitySummary(tokenAddress, 24),
@@ -1087,11 +1088,17 @@ export class MonitoringService {
           ?? null;
         const sinceStartVolumeUsd = allTimeSummary.volumeAllTimeUsd;
         const sinceStartBiggestBuyUsd = allTimeSummary.biggestBuyAllTimeUsd;
+        const sinceStartBuyTxCount = allTimeSummary.buyTxCountAllTime;
+        const sinceStartSellTxCount = allTimeSummary.sellTxCountAllTime;
+        const tokenPriceUsd = Number.isFinite(parseFloat(tokenPrice?.priceInUsd || ''))
+          ? parseFloat(tokenPrice?.priceInUsd || '0')
+          : null;
 
         const message = formatHourlyStatusUpdate({
           tokenAddress,
           tokenName: tokenInfo?.name || watchedToken.symbol || 'Unknown Token',
           tokenSymbol: tokenInfo?.symbol || watchedToken.symbol || 'UNKNOWN',
+          tokenPriceUsd,
           marketCapUsd: metrics.marketCapUsd,
           volume24hUsd: effectiveVolume24hUsd,
           buyers24h: effectiveBuyers24h,
@@ -1100,6 +1107,8 @@ export class MonitoringService {
           biggestBuy24hUsd: effectiveBiggestBuy24hUsd,
           sinceStartVolumeUsd,
           sinceStartBiggestBuyUsd,
+          sinceStartBuyTxCount,
+          sinceStartSellTxCount,
         });
 
         for (const watcher of watchers) {
