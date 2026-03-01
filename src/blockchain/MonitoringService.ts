@@ -567,8 +567,11 @@ export class MonitoringService {
           : currentHoldingsNumeric.toFixed(3);
       const holdingsUsdDisplay = `$${Math.max(0, Math.round(currentHoldingsUsdNumeric)).toLocaleString()}`;
       const walletTotalUsdNumeric = await this.priceService.getWalletTotalUsd(trader);
-      const walletTotalUsdDisplay = walletTotalUsdNumeric !== null
-        ? `$${Math.max(0, Math.round(walletTotalUsdNumeric)).toLocaleString()}`
+      const effectiveWalletTotalUsd = walletTotalUsdNumeric !== null
+        ? Math.max(walletTotalUsdNumeric, currentHoldingsUsdNumeric)
+        : currentHoldingsUsdNumeric;
+      const walletTotalUsdDisplay = Number.isFinite(effectiveWalletTotalUsd)
+        ? `$${Math.max(0, Math.round(effectiveWalletTotalUsd)).toLocaleString()}`
         : 'N/A';
 
       if (type === 'sell') {
@@ -839,8 +842,11 @@ export class MonitoringService {
           : currentHoldingsNumeric.toFixed(3);
       const holdingsUsdDisplay = `$${Math.max(0, Math.round(currentHoldingsUsdNumeric)).toLocaleString()}`;
       const walletTotalUsdNumeric = await this.priceService.getWalletTotalUsd(buyer);
-      const walletTotalUsdDisplay = walletTotalUsdNumeric !== null
-        ? `$${Math.max(0, Math.round(walletTotalUsdNumeric)).toLocaleString()}`
+      const effectiveWalletTotalUsd = walletTotalUsdNumeric !== null
+        ? Math.max(walletTotalUsdNumeric, currentHoldingsUsdNumeric)
+        : currentHoldingsUsdNumeric;
+      const walletTotalUsdDisplay = Number.isFinite(effectiveWalletTotalUsd)
+        ? `$${Math.max(0, Math.round(effectiveWalletTotalUsd)).toLocaleString()}`
         : 'N/A';
 
       if (isSell) {
