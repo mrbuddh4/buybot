@@ -94,6 +94,9 @@ export class TelegramBot {
     this.bot.onText(/\/clearlinks/, (msg) => {
       void this.executeCommandIfAuthorized(msg, () => this.commandHandler.handleClearLinks(msg));
     });
+    this.bot.onText(/\/statusnow/, (msg) => {
+      void this.executeCommandIfAuthorized(msg, () => this.commandHandler.handleStatusNow(msg));
+    });
     this.bot.on('callback_query', (query) => this.commandHandler.handleCallbackQuery(query));
     this.bot.on('message', (msg) => this.commandHandler.handlePendingInput(msg));
     this.bot.on('new_chat_members', (msg) => {
@@ -156,6 +159,7 @@ export class TelegramBot {
       { command: 'price', description: 'Check token price' },
       { command: 'settings', description: 'Open settings panel' },
       { command: 'buylinks', description: 'View alert button links' },
+      { command: 'statusnow', description: 'Send status updates now' },
       { command: 'help', description: 'Show available commands' },
     ];
 
@@ -166,6 +170,7 @@ export class TelegramBot {
       { command: 'info', description: 'Get token info' },
       { command: 'price', description: 'Check token price' },
       { command: 'settings', description: 'Open group settings' },
+      { command: 'statusnow', description: 'Send status updates now' },
       { command: 'help', description: 'Show available commands' },
     ];
 

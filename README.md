@@ -11,6 +11,7 @@ A powerful Telegram bot that monitors blockchain transactions in real-time and s
 - 🏢 **Group Support** - Works in private chats and group channels
 - ⚡ **Fast & Reliable** - WebSocket-based event monitoring
 - 🔗 **Direct Links** - Quick access to transactions, tokens, and wallets on block explorers
+- ⏱️ **Hourly Token Status** - Market cap, 24h volume, buyer/seller split, holders, and biggest recent buy
 
 ## How It Works
 
@@ -74,6 +75,8 @@ ENCRYPTION_KEY=your_32_character_encryption_key_here
 - `CHAIN_ID` - Network chain ID
 - `ETHERSCAN_API_KEY` - For enhanced blockchain data
 - `COINGECKO_API_KEY` - For better price feeds
+- `HOURLY_STATUS_UPDATES_ENABLED` - Enable/disable periodic watched-token status updates (default: `true`)
+- `HOURLY_STATUS_INTERVAL_MINUTES` - Frequency for status updates (default: `60`, min: `5`)
 - `SIDIORA_CHART_URL_TEMPLATE` - AMM alert chart link template (supports `{token}` and `{tokenLower}`)
 - `PAXFUN_CHART_URL_TEMPLATE` - HLPMM alert chart link template (supports `{token}` and `{tokenLower}`)
 
@@ -101,6 +104,7 @@ npm start
 - `/watchlist` - View all monitored tokens
 - `/info <token_address>` - Get detailed token information
 - `/price <token_address>` - Check current token price
+- `/statusnow` - Send immediate status updates for watched tokens in current chat
 
 ## Example Usage
 

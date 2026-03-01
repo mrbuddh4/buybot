@@ -21,6 +21,18 @@ interface TransactionAlertData {
   purchaseCurrencySymbol?: string;
 }
 
+interface HourlyStatusData {
+  tokenAddress: string;
+  tokenName: string;
+  tokenSymbol: string;
+  marketCapUsd: number | null;
+  volume24hUsd: number | null;
+  buyers24h: number | null;
+  sellers24h: number | null;
+  holders: number | null;
+  biggestBuy24hUsd: number | null;
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -136,6 +148,48 @@ ${statusDots}
 
 💲 Token Price: ${tokenUnitUsdPriceText} USDC
 📈 Market Cap: ${marketCapText} USDC
+  `.trim();
+}
+
+export function formatHourlyStatusUpdate(data: HourlyStatusData): string {
+  const explorerUrl = process.env.BLOCK_EXPLORER_URL || 'https://etherscan.io';
+  const tokenUrl = `${explorerUrl}/token/${data.tokenAddress}`;
+  const escapedTokenName = escapeHtml(data.tokenName);
+  const escapedTokenSymbol = escapeHtml(data.tokenSymbol);
+
+  const marketCapText = data.marketCapUsd !== null ? `${formatUsdCompact(data.marketCapUsd)} USDC` : 'N/A';
+  const volume24hText = data.volume24hUsd !== null ? `${formatUsdCompact(data.volume24hUsd)} USDC` : 'N/A';
+  const holdersText = data.holders !== null
+    ? Math.max(0, Math.floor(data.holders)).toLocaleString('en-US')
+    : 'N/A';
+  const biggestBuyText = data.biggestBuy24hUsd !== null
+    ? `${formatUsdCompact(data.biggestBuy24hUsd)} USDC`
+    : 'N/A';
+
+  let buyersVsSellersText = 'N/A';
+  if (data.buyers24h !== null && data.sellers24h !== null) {
+    const buyers = Math.max(0, data.buyers24h);
+    const sellers = Math.max(0, data.sellers24h);
+    const total = buyers + sellers;
+
+    if (total > 0) {
+      const buyersPct = (buyers / total) * 100;
+      const sellersPct = (sellers / total) * 100;
+      buyersVsSellersText = `${buyersPct.toFixed(1)}% buyers / ${sellersPct.toFixed(1)}% sellers`;
+    } else {
+      buyersVsSellersText = '0.0% buyers / 0.0% sellers';
+    }
+  }
+
+  return `
+<b>⏱️ Hourly Status Update</b>
+
+<a href="${tokenUrl}">${escapedTokenName} (${escapedTokenSymbol})</a>
+📈 Market Cap: ${marketCapText}
+📊 24h Volume: ${volume24hText}
+⚖️ Buyers vs Sellers: ${buyersVsSellersText}
+👥 Holders: ${holdersText}
+🏆 Biggest Buy (24h): ${biggestBuyText}
   `.trim();
 }
 

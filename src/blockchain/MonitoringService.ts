@@ -3,7 +3,7 @@ import TelegramBot from 'node-telegram-bot-api';
 import { logger } from '../utils/logger';
 import { Database } from '../database/Database';
 import { PriceService } from './PriceService';
-import { formatTransactionAlert } from '../utils/formatter';
+import { formatHourlyStatusUpdate, formatTransactionAlert } from '../utils/formatter';
 
 interface SwapEvent {
   tokenAddress: string;
@@ -36,6 +36,8 @@ export class MonitoringService {
   private hlpmmPoolTokenCache: Map<string, string> = new Map();
   private hlpmmEnabled: boolean = false;
   private disabledChats: Set<number> = new Set();
+  private statusUpdateInterval: NodeJS.Timeout | null = null;
+  private statusUpdateInProgress: boolean = false;
   private readonly ammRouterInterface = new ethers.Interface([
     'function swapExactETHForTokens(uint256 amountOutMin, address[] path, address to, uint256 deadline)',
     'function swapExactETHForTokensSupportingFeeOnTransferTokens(uint256 amountOutMin, address[] path, address to, uint256 deadline)',
@@ -107,6 +109,8 @@ export class MonitoringService {
       for (const token of watchedTokens) {
         await this.startMonitoringToken(token.token_address);
       }
+
+      this.startHourlyStatusUpdates();
 
       logger.info(`Monitoring service started - watching ${watchedTokens.length} tokens`);
     } catch (error) {
@@ -680,7 +684,8 @@ export class MonitoringService {
           type,
           trader,
           value.toString(),
-          estimatedEthValue
+          estimatedEthValue,
+          totalUsdValue
         );
         await this.db.setTraderPosition(tokenAddress, trader, currentHoldingsToken);
         logger.info(`Delivered alert for tx ${swapEvent.txHash} to ${deliveredCount} watcher(s)`);
@@ -926,7 +931,8 @@ export class MonitoringService {
           'buy',
           buyer,
           amountOut.toString(),
-          usidAmount
+          usidAmount,
+          totalUsdValue
         );
         await this.db.setTraderPosition(tokenAddress, buyer, currentHoldingsToken);
         logger.info(`Delivered HLPMM alert for tx ${txHash} to ${deliveredCount} watcher(s)`);
@@ -942,6 +948,11 @@ export class MonitoringService {
 
   async stop(): Promise<void> {
     this.isRunning = false;
+
+    if (this.statusUpdateInterval) {
+      clearInterval(this.statusUpdateInterval);
+      this.statusUpdateInterval = null;
+    }
     
     // Remove all listeners
     for (const [tokenAddress, contract] of this.monitoredTokens) {
@@ -956,5 +967,117 @@ export class MonitoringService {
 
   isTokenMonitored(tokenAddress: string): boolean {
     return this.monitoredTokens.has(tokenAddress);
+  }
+
+  private getHourlyStatusIntervalMs(): number {
+    const configuredMinutes = parseInt(process.env.HOURLY_STATUS_INTERVAL_MINUTES || '60', 10);
+    const safeMinutes = Number.isFinite(configuredMinutes)
+      ? Math.max(5, Math.min(1440, configuredMinutes))
+      : 60;
+    return safeMinutes * 60 * 1000;
+  }
+
+  private startHourlyStatusUpdates(): void {
+    const enabled = (process.env.HOURLY_STATUS_UPDATES_ENABLED || 'true').toLowerCase() !== 'false';
+    if (!enabled) {
+      logger.info('Hourly status updates disabled by HOURLY_STATUS_UPDATES_ENABLED=false');
+      return;
+    }
+
+    if (this.statusUpdateInterval) {
+      return;
+    }
+
+    const intervalMs = this.getHourlyStatusIntervalMs();
+
+    this.statusUpdateInterval = setInterval(() => {
+      void this.sendHourlyStatusUpdates();
+    }, intervalMs);
+
+    logger.info(`Hourly status updates scheduled every ${Math.round(intervalMs / 60000)} minute(s)`);
+  }
+
+  async triggerHourlyStatusUpdates(chatId?: number): Promise<number> {
+    return this.sendHourlyStatusUpdates(chatId);
+  }
+
+  private async sendHourlyStatusUpdates(chatId?: number): Promise<number> {
+    if (!this.isRunning || this.statusUpdateInProgress) {
+      return 0;
+    }
+
+    this.statusUpdateInProgress = true;
+    try {
+      const watchedTokens = chatId !== undefined
+        ? (await this.db.getWatchedTokens(chatId)).map((token) => ({
+            token_address: token.address,
+            symbol: token.symbol,
+          }))
+        : await this.db.getAllWatchedTokens();
+
+      if (watchedTokens.length === 0) {
+        return 0;
+      }
+
+      let sentCount = 0;
+      for (const watchedToken of watchedTokens) {
+        const tokenAddress = watchedToken.token_address.toLowerCase();
+        const watchers = chatId !== undefined
+          ? [{ chat_id: chatId }]
+          : await this.db.getTokenWatchers(tokenAddress);
+
+        if (watchers.length === 0) {
+          continue;
+        }
+
+        const [tokenInfo, metrics, largestRecentBuy] = await Promise.all([
+          this.priceService.getTokenInfo(tokenAddress),
+          this.priceService.getTokenStatusMetrics(tokenAddress),
+          this.db.getLargestRecentBuyUsd(tokenAddress, 24),
+        ]);
+
+        const message = formatHourlyStatusUpdate({
+          tokenAddress,
+          tokenName: tokenInfo?.name || watchedToken.symbol || 'Unknown Token',
+          tokenSymbol: tokenInfo?.symbol || watchedToken.symbol || 'UNKNOWN',
+          marketCapUsd: metrics.marketCapUsd,
+          volume24hUsd: metrics.volume24hUsd,
+          buyers24h: metrics.buyers24h,
+          sellers24h: metrics.sellers24h,
+          holders: metrics.holders,
+          biggestBuy24hUsd: metrics.biggestBuy24hUsd ?? largestRecentBuy?.transaction_value_usd ?? null,
+        });
+
+        for (const watcher of watchers) {
+          try {
+            await this.bot.sendMessage(watcher.chat_id, message, {
+              parse_mode: 'HTML',
+              disable_web_page_preview: true,
+            });
+            sentCount += 1;
+          } catch (error) {
+            logger.error(`Failed to send hourly status to chat ${watcher.chat_id}:`, error);
+            if (this.isKickedChatError(error) && !this.disabledChats.has(watcher.chat_id)) {
+              this.disabledChats.add(watcher.chat_id);
+              try {
+                await this.db.disableChatWatchers(watcher.chat_id);
+              } catch (disableError) {
+                logger.error(`Failed to auto-disable kicked chat ${watcher.chat_id}:`, disableError);
+              }
+            }
+          }
+        }
+      }
+
+      if (sentCount > 0) {
+        logger.info(`Hourly status updates sent to ${sentCount} chat/token watcher(s)`);
+      }
+      return sentCount;
+    } catch (error) {
+      logger.error('Failed to send hourly status updates:', error);
+      return 0;
+    } finally {
+      this.statusUpdateInProgress = false;
+    }
   }
 }

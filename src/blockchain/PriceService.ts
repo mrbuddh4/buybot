@@ -7,6 +7,15 @@ export interface TokenPrice {
   priceInUsd: string;
 }
 
+export interface TokenStatusMetrics {
+  marketCapUsd: number | null;
+  volume24hUsd: number | null;
+  buyers24h: number | null;
+  sellers24h: number | null;
+  holders: number | null;
+  biggestBuy24hUsd: number | null;
+}
+
 export class PriceService {
   private provider: ethers.JsonRpcProvider;
   private routerAddress: string;
@@ -121,6 +130,43 @@ export class PriceService {
         return value;
       }
     }
+    return null;
+  }
+
+  private parseNumericFieldAllowZero(source: any, keys: string[]): number | null {
+    for (const key of keys) {
+      const raw = source?.[key];
+      const value = typeof raw === 'string' || typeof raw === 'number' ? parseFloat(String(raw)) : NaN;
+      if (Number.isFinite(value) && value >= 0) {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  private parseIntegerFieldAllowZero(source: any, keys: string[]): number | null {
+    const numeric = this.parseNumericFieldAllowZero(source, keys);
+    if (numeric === null) {
+      return null;
+    }
+    return Math.floor(numeric);
+  }
+
+  private extractMetricFromCandidates(
+    candidates: any[],
+    keys: string[],
+    integer: boolean = false
+  ): number | null {
+    for (const candidate of candidates) {
+      const value = integer
+        ? this.parseIntegerFieldAllowZero(candidate, keys)
+        : this.parseNumericFieldAllowZero(candidate, keys);
+
+      if (value !== null) {
+        return value;
+      }
+    }
+
     return null;
   }
 
@@ -273,6 +319,125 @@ export class PriceService {
       logger.error('Error getting token price from AMM:', error);
       const fallbackPrice = await this.getHLPMMTokenPrice(tokenAddress);
       return fallbackPrice;
+    }
+  }
+
+  async getTokenStatusMetrics(tokenAddress: string): Promise<TokenStatusMetrics> {
+    try {
+      const data = await this.getTokenFromPortfolioApi(tokenAddress);
+      const candidates = [
+        data,
+        data?.data,
+        data?.result,
+        data?.stats,
+        data?.metrics,
+        data?.data?.stats,
+        data?.data?.metrics,
+      ];
+
+      let marketCapUsd = this.extractMetricFromCandidates(candidates, [
+        'market_cap_usd',
+        'marketCapUsd',
+        'marketcap_usd',
+        'fdv_usd',
+        'fdvUsd',
+      ]);
+
+      const volume24hUsd = this.extractMetricFromCandidates(candidates, [
+        'volume_24h_usd',
+        'volume24hUsd',
+        'trading_volume_24h_usd',
+        'tradingVolume24hUsd',
+        'volume_24h',
+        'volume24h',
+      ]);
+
+      const buyers24h = this.extractMetricFromCandidates(
+        candidates,
+        [
+          'buyers_24h',
+          'buyers24h',
+          'unique_buyers_24h',
+          'uniqueBuyers24h',
+          'buy_count_24h',
+          'buyCount24h',
+        ],
+        true
+      );
+
+      const sellers24h = this.extractMetricFromCandidates(
+        candidates,
+        [
+          'sellers_24h',
+          'sellers24h',
+          'unique_sellers_24h',
+          'uniqueSellers24h',
+          'sell_count_24h',
+          'sellCount24h',
+        ],
+        true
+      );
+
+      const holders = this.extractMetricFromCandidates(
+        candidates,
+        [
+          'holders',
+          'holders_count',
+          'holdersCount',
+          'holder_count',
+          'holderCount',
+          'total_holders',
+          'totalHolders',
+        ],
+        true
+      );
+
+      const biggestBuy24hUsd = this.extractMetricFromCandidates(candidates, [
+        'biggest_buy_usd_24h',
+        'biggestBuyUsd24h',
+        'max_buy_usd_24h',
+        'maxBuyUsd24h',
+        'recent_biggest_buy_usd',
+        'recentBiggestBuyUsd',
+      ]);
+
+      if (marketCapUsd === null) {
+        const tokenInfo = await this.getTokenInfo(tokenAddress);
+        if (tokenInfo?.marketCapUsd) {
+          const parsedMarketCap = parseFloat(tokenInfo.marketCapUsd);
+          if (Number.isFinite(parsedMarketCap) && parsedMarketCap > 0) {
+            marketCapUsd = parsedMarketCap;
+          }
+        }
+
+        if (marketCapUsd === null && tokenInfo) {
+          const price = await this.getTokenPrice(tokenAddress);
+          const priceInUsd = parseFloat(price?.priceInUsd || '0');
+          const supply = parseFloat(tokenInfo.totalSupply || '0');
+          if (Number.isFinite(priceInUsd) && priceInUsd > 0 && Number.isFinite(supply) && supply > 0) {
+            marketCapUsd = priceInUsd * supply;
+          }
+        }
+      }
+
+      return {
+        marketCapUsd,
+        volume24hUsd,
+        buyers24h,
+        sellers24h,
+        holders,
+        biggestBuy24hUsd,
+      };
+    } catch (error) {
+      logger.error('Error getting token status metrics:', error);
+      return {
+        marketCapUsd: null,
+        volume24hUsd: null,
+        buyers24h: null,
+        sellers24h: null,
+        holders: null,
+        biggestBuy24hUsd: null,
+      };
     }
   }
 

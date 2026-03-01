@@ -60,6 +60,7 @@ I'll notify you whenever tokens you're watching are bought or sold on the blockc
 /setx <url> - Set alert X button
 /buylinks - View current alert links
 /clearlinks - Remove custom alert links
+/statusnow - Send token status update now
 /settings - Open group settings panel
 /help - Show all commands
 
@@ -91,6 +92,7 @@ Add me to a group to monitor tokens for everyone!
 /setx <url> - Set alert X button
 /buylinks - View current alert links
 /clearlinks - Remove custom alert links
+/statusnow - Send token status update now
 /settings - Open settings panel
 
 **How it works:**
@@ -693,6 +695,25 @@ Updated: ${new Date().toLocaleString()}
     } catch (error) {
       logger.error('Error handling /clearlinks command:', error);
       await this.bot.sendMessage(chatId, '❌ Failed to clear links.');
+    }
+  }
+
+  async handleStatusNow(msg: TelegramBot.Message): Promise<void> {
+    const chatId = msg.chat.id;
+
+    try {
+      await this.bot.sendMessage(chatId, '⏳ Sending status update for watched tokens...');
+      const sentCount = await this.monitoringService.triggerHourlyStatusUpdates(chatId);
+
+      if (sentCount === 0) {
+        await this.bot.sendMessage(chatId, 'ℹ️ No watched tokens found for this chat yet. Use /watch <token_address> first.');
+        return;
+      }
+
+      await this.bot.sendMessage(chatId, `✅ Sent ${sentCount} status update${sentCount === 1 ? '' : 's'}.`);
+    } catch (error) {
+      logger.error('Error handling /statusnow command:', error);
+      await this.bot.sendMessage(chatId, '❌ Failed to send status update right now.');
     }
   }
 

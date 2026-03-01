@@ -22,6 +22,14 @@ export interface DetectedTransaction {
   trader_address: string;
   token_amount: string;
   eth_amount: string;
+  transaction_value_usd: number | null;
+  detected_at: string;
+}
+
+export interface LargestRecentBuy {
+  tx_hash: string;
+  trader_address: string;
+  transaction_value_usd: number;
   detected_at: string;
 }
 
@@ -184,6 +192,7 @@ export class Database {
           trader_address TEXT NOT NULL,
           token_amount TEXT NOT NULL,
           eth_amount TEXT NOT NULL,
+          transaction_value_usd DOUBLE PRECISION,
           detected_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
         )
       `);
@@ -225,6 +234,7 @@ export class Database {
       await this.addColumnIfMissing('chat_settings', 'buy_icon_pattern', "TEXT DEFAULT '🟢⚔️'");
       await this.addColumnIfMissing('watched_tokens', 'alert_media_type', 'TEXT');
       await this.addColumnIfMissing('watched_tokens', 'alert_media_file_id', 'TEXT');
+      await this.addColumnIfMissing('detected_transactions', 'transaction_value_usd', 'DOUBLE PRECISION');
 
       await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_chat_tokens ON watched_tokens(chat_id)`);
       await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_token_address ON watched_tokens(token_address)`);
@@ -343,12 +353,16 @@ export class Database {
     type: string,
     traderAddress: string,
     tokenAmount: string,
-    ethAmount: string
+    ethAmount: string,
+    transactionValueUsd: number | null = null
   ): Promise<boolean> {
     try {
       const result = await this.pool.query(
-        'INSERT INTO detected_transactions (token_address, tx_hash, type, trader_address, token_amount, eth_amount) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (tx_hash) DO NOTHING',
-        [tokenAddress.toLowerCase(), txHash, type, traderAddress, tokenAmount, ethAmount]
+        `INSERT INTO detected_transactions
+          (token_address, tx_hash, type, trader_address, token_amount, eth_amount, transaction_value_usd)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (tx_hash) DO NOTHING`,
+        [tokenAddress.toLowerCase(), txHash, type, traderAddress, tokenAmount, ethAmount, transactionValueUsd]
       );
 
       const inserted = (result.rowCount ?? 0) > 0;
@@ -372,6 +386,46 @@ export class Database {
       return (result.rowCount ?? 0) > 0;
     } catch (error) {
       logger.error('Error checking detected transaction:', error);
+      throw error;
+    }
+  }
+
+  async getLargestRecentBuyUsd(tokenAddress: string, lookbackHours: number = 24): Promise<LargestRecentBuy | null> {
+    try {
+      const safeLookbackHours = Number.isFinite(lookbackHours)
+        ? Math.max(1, Math.min(168, Math.floor(lookbackHours)))
+        : 24;
+
+      const { rows } = await this.pool.query(
+        `SELECT tx_hash, trader_address, transaction_value_usd, detected_at
+         FROM detected_transactions
+         WHERE token_address = $1
+           AND type = 'buy'
+           AND transaction_value_usd IS NOT NULL
+           AND detected_at >= NOW() - ($2::text || ' hours')::interval
+         ORDER BY transaction_value_usd DESC, detected_at DESC
+         LIMIT 1`,
+        [tokenAddress.toLowerCase(), safeLookbackHours]
+      );
+
+      const row = rows[0];
+      if (!row) {
+        return null;
+      }
+
+      const usdValue = Number(row.transaction_value_usd);
+      if (!Number.isFinite(usdValue) || usdValue < 0) {
+        return null;
+      }
+
+      return {
+        tx_hash: String(row.tx_hash),
+        trader_address: String(row.trader_address),
+        transaction_value_usd: usdValue,
+        detected_at: String(row.detected_at),
+      };
+    } catch (error) {
+      logger.error('Error getting largest recent buy:', error);
       throw error;
     }
   }

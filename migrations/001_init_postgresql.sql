@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS detected_transactions (
   trader_address TEXT NOT NULL,
   token_amount TEXT NOT NULL,
   eth_amount TEXT NOT NULL,
+  transaction_value_usd DOUBLE PRECISION,
   detected_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
