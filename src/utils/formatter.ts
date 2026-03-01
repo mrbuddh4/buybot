@@ -203,28 +203,6 @@ export function formatHourlyStatusUpdate(data: HourlyStatusData): string {
     lines.push(`🏆 Biggest Buy (24h): ${formatUsdCompact(data.biggestBuy24hUsd)} USDC`);
   }
 
-  if (data.volume24hUsd === null || data.biggestBuy24hUsd === null) {
-    const sinceStartParts: string[] = [];
-
-    if (data.sinceStartVolumeUsd !== null && data.sinceStartVolumeUsd !== undefined) {
-      sinceStartParts.push(`Volume ${formatUsdCompact(data.sinceStartVolumeUsd)} USDC`);
-    }
-
-    if (data.sinceStartBiggestBuyUsd !== null && data.sinceStartBiggestBuyUsd !== undefined) {
-      sinceStartParts.push(`Biggest Buy ${formatUsdCompact(data.sinceStartBiggestBuyUsd)} USDC`);
-    }
-
-    const buyCount = Math.max(0, Math.floor(data.sinceStartBuyTxCount || 0));
-    const sellCount = Math.max(0, Math.floor(data.sinceStartSellTxCount || 0));
-    if (buyCount > 0 || sellCount > 0) {
-      sinceStartParts.push(`${buyCount} buys / ${sellCount} sells`);
-    }
-
-    if (sinceStartParts.length > 0) {
-      lines.push(`🕒 Since Start: ${sinceStartParts.join(' · ')}`);
-    }
-  }
-
   if (lines.length === 0) {
     lines.push('ℹ️ No live market stats available right now.');
   }

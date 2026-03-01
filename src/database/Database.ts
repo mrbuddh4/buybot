@@ -540,6 +540,37 @@ export class Database {
     }
   }
 
+  async hasTokenHistoryWindow(tokenAddress: string, minimumHours: number = 24): Promise<boolean> {
+    try {
+      const safeHours = Number.isFinite(minimumHours)
+        ? Math.max(1, Math.min(168, Math.floor(minimumHours)))
+        : 24;
+
+      const { rows } = await this.pool.query(
+        `SELECT MIN(detected_at) AS first_detected_at
+         FROM detected_transactions
+         WHERE token_address = $1`,
+        [tokenAddress.toLowerCase()]
+      );
+
+      const firstDetectedAtRaw = rows[0]?.first_detected_at;
+      if (!firstDetectedAtRaw) {
+        return false;
+      }
+
+      const firstDetectedAt = new Date(firstDetectedAtRaw);
+      if (Number.isNaN(firstDetectedAt.getTime())) {
+        return false;
+      }
+
+      const elapsedMs = Date.now() - firstDetectedAt.getTime();
+      return elapsedMs >= safeHours * 60 * 60 * 1000;
+    } catch (error) {
+      logger.error('Error checking token history window:', error);
+      return false;
+    }
+  }
+
   async getAlertLinks(chatId: number): Promise<AlertLinks> {
     try {
       const { rows } = await this.pool.query(

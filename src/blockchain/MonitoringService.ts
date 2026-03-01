@@ -1113,18 +1113,19 @@ export class MonitoringService {
           continue;
         }
 
-        const [tokenInfo, tokenPrice, metrics, largestRecentBuy, activitySummary, allTimeSummary] = await Promise.all([
+        const [tokenInfo, tokenPrice, metrics, largestRecentBuy, activitySummary, allTimeSummary, has24hHistory] = await Promise.all([
           this.priceService.getTokenInfo(tokenAddress),
           this.priceService.getTokenPrice(tokenAddress),
           this.priceService.getTokenStatusMetrics(tokenAddress),
           this.db.getLargestRecentBuyUsd(tokenAddress, 24),
           this.db.getRecentTokenActivitySummary(tokenAddress, 24),
           this.db.getTokenActivitySummaryAllTime(tokenAddress),
+          this.db.hasTokenHistoryWindow(tokenAddress, 24),
         ]);
 
         const effectiveVolume24hUsd = metrics.volume24hUsd ?? activitySummary.volume24hUsd;
-        const effectiveBuyers24h = metrics.buyers24h;
-        const effectiveSellers24h = metrics.sellers24h;
+        const effectiveBuyers24h = has24hHistory ? metrics.buyers24h : null;
+        const effectiveSellers24h = has24hHistory ? metrics.sellers24h : null;
         const effectiveHolders = metrics.holders ?? activitySummary.holdersEstimate;
         const effectiveBiggestBuy24hUsd =
           metrics.biggestBuy24hUsd
