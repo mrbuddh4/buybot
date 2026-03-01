@@ -33,6 +33,14 @@ export interface LargestRecentBuy {
   detected_at: string;
 }
 
+export interface RecentTokenActivitySummary {
+  volume24hUsd: number | null;
+  buyers24h: number | null;
+  sellers24h: number | null;
+  biggestBuy24hUsd: number | null;
+  holdersEstimate: number | null;
+}
+
 export interface AlertLinks {
   website_url: string | null;
   telegram_url: string | null;
@@ -427,6 +435,65 @@ export class Database {
     } catch (error) {
       logger.error('Error getting largest recent buy:', error);
       throw error;
+    }
+  }
+
+  async getRecentTokenActivitySummary(
+    tokenAddress: string,
+    lookbackHours: number = 24
+  ): Promise<RecentTokenActivitySummary> {
+    try {
+      const safeLookbackHours = Number.isFinite(lookbackHours)
+        ? Math.max(1, Math.min(168, Math.floor(lookbackHours)))
+        : 24;
+
+      const [{ rows: activityRows }, { rows: holderRows }] = await Promise.all([
+        this.pool.query(
+          `SELECT
+             SUM(transaction_value_usd) AS volume_24h_usd,
+             COUNT(DISTINCT CASE WHEN type = 'buy' THEN trader_address END) AS buyers_24h,
+             COUNT(DISTINCT CASE WHEN type = 'sell' THEN trader_address END) AS sellers_24h,
+             MAX(CASE WHEN type = 'buy' THEN transaction_value_usd END) AS biggest_buy_24h_usd
+           FROM detected_transactions
+           WHERE token_address = $1
+             AND detected_at >= NOW() - ($2::text || ' hours')::interval`,
+          [tokenAddress.toLowerCase(), safeLookbackHours]
+        ),
+        this.pool.query(
+          `SELECT COUNT(*)::int AS holders_estimate
+           FROM trader_positions
+           WHERE token_address = $1
+             AND holdings_token ~ '^[0-9]+(\\.[0-9]+)?$'
+             AND holdings_token::double precision > 0`,
+          [tokenAddress.toLowerCase()]
+        ),
+      ]);
+
+      const activity = activityRows[0] || {};
+      const holdersRaw = holderRows[0]?.holders_estimate;
+
+      const volume24hUsd = Number(activity.volume_24h_usd);
+      const buyers24h = Number(activity.buyers_24h);
+      const sellers24h = Number(activity.sellers_24h);
+      const biggestBuy24hUsd = Number(activity.biggest_buy_24h_usd);
+      const holdersEstimate = Number(holdersRaw);
+
+      return {
+        volume24hUsd: Number.isFinite(volume24hUsd) && volume24hUsd > 0 ? volume24hUsd : null,
+        buyers24h: Number.isFinite(buyers24h) ? Math.max(0, Math.floor(buyers24h)) : null,
+        sellers24h: Number.isFinite(sellers24h) ? Math.max(0, Math.floor(sellers24h)) : null,
+        biggestBuy24hUsd: Number.isFinite(biggestBuy24hUsd) && biggestBuy24hUsd > 0 ? biggestBuy24hUsd : null,
+        holdersEstimate: Number.isFinite(holdersEstimate) ? Math.max(0, Math.floor(holdersEstimate)) : null,
+      };
+    } catch (error) {
+      logger.error('Error getting recent token activity summary:', error);
+      return {
+        volume24hUsd: null,
+        buyers24h: null,
+        sellers24h: null,
+        biggestBuy24hUsd: null,
+        holdersEstimate: null,
+      };
     }
   }
 
