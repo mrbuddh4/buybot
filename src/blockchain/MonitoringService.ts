@@ -37,6 +37,7 @@ export class MonitoringService {
   private hlpmmEnabled: boolean = false;
   private disabledChats: Set<number> = new Set();
   private statusUpdateInterval: NodeJS.Timeout | null = null;
+  private statusUpdateStartupTimeout: NodeJS.Timeout | null = null;
   private statusUpdateInProgress: boolean = false;
   private readonly ammRouterInterface = new ethers.Interface([
     'function swapExactETHForTokens(uint256 amountOutMin, address[] path, address to, uint256 deadline)',
@@ -949,6 +950,11 @@ export class MonitoringService {
   async stop(): Promise<void> {
     this.isRunning = false;
 
+    if (this.statusUpdateStartupTimeout) {
+      clearTimeout(this.statusUpdateStartupTimeout);
+      this.statusUpdateStartupTimeout = null;
+    }
+
     if (this.statusUpdateInterval) {
       clearInterval(this.statusUpdateInterval);
       this.statusUpdateInterval = null;
@@ -977,6 +983,18 @@ export class MonitoringService {
     return safeMinutes * 60 * 1000;
   }
 
+  private getDelayToNextStatusBoundaryMs(intervalMs: number): number {
+    const now = new Date();
+    const elapsedThisHourMs =
+      (now.getMinutes() * 60 * 1000) +
+      (now.getSeconds() * 1000) +
+      now.getMilliseconds();
+
+    const modulo = elapsedThisHourMs % intervalMs;
+    const delay = modulo === 0 ? intervalMs : intervalMs - modulo;
+    return Math.max(1_000, delay);
+  }
+
   private startHourlyStatusUpdates(): void {
     const enabled = (process.env.HOURLY_STATUS_UPDATES_ENABLED || 'true').toLowerCase() !== 'false';
     if (!enabled) {
@@ -984,17 +1002,37 @@ export class MonitoringService {
       return;
     }
 
-    if (this.statusUpdateInterval) {
+    if (this.statusUpdateInterval || this.statusUpdateStartupTimeout) {
       return;
     }
 
     const intervalMs = this.getHourlyStatusIntervalMs();
+    const alignToClock = (process.env.HOURLY_STATUS_ALIGN_TO_CLOCK || 'true').toLowerCase() !== 'false';
 
-    this.statusUpdateInterval = setInterval(() => {
+    if (!alignToClock) {
+      this.statusUpdateInterval = setInterval(() => {
+        void this.sendHourlyStatusUpdates();
+      }, intervalMs);
+
+      logger.info(`Hourly status updates scheduled every ${Math.round(intervalMs / 60000)} minute(s) from startup`);
+      return;
+    }
+
+    const initialDelayMs = this.getDelayToNextStatusBoundaryMs(intervalMs);
+    const firstRunAt = new Date(Date.now() + initialDelayMs);
+
+    this.statusUpdateStartupTimeout = setTimeout(() => {
+      this.statusUpdateStartupTimeout = null;
       void this.sendHourlyStatusUpdates();
-    }, intervalMs);
 
-    logger.info(`Hourly status updates scheduled every ${Math.round(intervalMs / 60000)} minute(s)`);
+      this.statusUpdateInterval = setInterval(() => {
+        void this.sendHourlyStatusUpdates();
+      }, intervalMs);
+    }, initialDelayMs);
+
+    logger.info(
+      `Hourly status updates scheduled on clock boundary every ${Math.round(intervalMs / 60000)} minute(s); first run at ${firstRunAt.toISOString()}`
+    );
   }
 
   async triggerHourlyStatusUpdates(chatId?: number): Promise<number> {

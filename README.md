@@ -80,6 +80,7 @@ ENCRYPTION_KEY=your_32_character_encryption_key_here
 - `STATUS_METRICS_DEBUG` - Log one-time per-token metric source breakdown (`true`/`false`, default: `false`)
 - `HOURLY_STATUS_UPDATES_ENABLED` - Enable/disable periodic watched-token status updates (default: `true`)
 - `HOURLY_STATUS_INTERVAL_MINUTES` - Frequency for status updates (default: `60`, min: `5`)
+- `HOURLY_STATUS_ALIGN_TO_CLOCK` - Align scheduled updates to clock boundaries (default: `true`; with `60` sends at top of hour)
 - `SIDIORA_CHART_URL_TEMPLATE` - AMM alert chart link template (supports `{token}` and `{tokenLower}`)
 - `PAXFUN_CHART_URL_TEMPLATE` - HLPMM alert chart link template (supports `{token}` and `{tokenLower}`)
 
