@@ -1076,8 +1076,8 @@ export class MonitoringService {
         ]);
 
         const effectiveVolume24hUsd = metrics.volume24hUsd ?? activitySummary.volume24hUsd;
-        const effectiveBuyers24h = metrics.buyers24h ?? activitySummary.buyers24h;
-        const effectiveSellers24h = metrics.sellers24h ?? activitySummary.sellers24h;
+        const effectiveBuyers24h = metrics.buyers24h;
+        const effectiveSellers24h = metrics.sellers24h;
         const effectiveHolders = metrics.holders ?? activitySummary.holdersEstimate;
         const effectiveBiggestBuy24hUsd =
           metrics.biggestBuy24hUsd
