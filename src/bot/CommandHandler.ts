@@ -702,15 +702,12 @@ Updated: ${new Date().toLocaleString()}
     const chatId = msg.chat.id;
 
     try {
-      await this.bot.sendMessage(chatId, '⏳ Sending status update for watched tokens...');
       const sentCount = await this.monitoringService.triggerHourlyStatusUpdates(chatId);
 
       if (sentCount === 0) {
         await this.bot.sendMessage(chatId, 'ℹ️ No watched tokens found for this chat yet. Use /watch <token_address> first.');
         return;
       }
-
-      await this.bot.sendMessage(chatId, `✅ Sent ${sentCount} status update${sentCount === 1 ? '' : 's'}.`);
     } catch (error) {
       logger.error('Error handling /statusnow command:', error);
       await this.bot.sendMessage(chatId, '❌ Failed to send status update right now.');

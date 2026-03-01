@@ -157,16 +157,17 @@ export function formatHourlyStatusUpdate(data: HourlyStatusData): string {
   const escapedTokenName = escapeHtml(data.tokenName);
   const escapedTokenSymbol = escapeHtml(data.tokenSymbol);
 
-  const marketCapText = data.marketCapUsd !== null ? `${formatUsdCompact(data.marketCapUsd)} USDC` : 'N/A';
-  const volume24hText = data.volume24hUsd !== null ? `${formatUsdCompact(data.volume24hUsd)} USDC` : 'N/A';
-  const holdersText = data.holders !== null
-    ? Math.max(0, Math.floor(data.holders)).toLocaleString('en-US')
-    : 'N/A';
-  const biggestBuyText = data.biggestBuy24hUsd !== null
-    ? `${formatUsdCompact(data.biggestBuy24hUsd)} USDC`
-    : 'N/A';
+  const lines: string[] = [];
 
-  let buyersVsSellersText = 'N/A';
+  if (data.marketCapUsd !== null) {
+    lines.push(`📈 Market Cap: ${formatUsdCompact(data.marketCapUsd)} USDC`);
+  }
+
+  if (data.volume24hUsd !== null) {
+    lines.push(`📊 24h Volume: ${formatUsdCompact(data.volume24hUsd)} USDC`);
+  }
+
+  let buyersVsSellersText: string | null = null;
   if (data.buyers24h !== null && data.sellers24h !== null) {
     const buyers = Math.max(0, data.buyers24h);
     const sellers = Math.max(0, data.sellers24h);
@@ -181,15 +182,27 @@ export function formatHourlyStatusUpdate(data: HourlyStatusData): string {
     }
   }
 
+  if (buyersVsSellersText) {
+    lines.push(`⚖️ Buyers vs Sellers: ${buyersVsSellersText}`);
+  }
+
+  if (data.holders !== null) {
+    lines.push(`👥 Holders: ${Math.max(0, Math.floor(data.holders)).toLocaleString('en-US')}`);
+  }
+
+  if (data.biggestBuy24hUsd !== null) {
+    lines.push(`🏆 Biggest Buy (24h): ${formatUsdCompact(data.biggestBuy24hUsd)} USDC`);
+  }
+
+  if (lines.length === 0) {
+    lines.push('ℹ️ No live market stats available right now.');
+  }
+
   return `
 <b>⏱️ Hourly Status Update</b>
 
 <a href="${tokenUrl}">${escapedTokenName} (${escapedTokenSymbol})</a>
-📈 Market Cap: ${marketCapText}
-📊 24h Volume: ${volume24hText}
-⚖️ Buyers vs Sellers: ${buyersVsSellersText}
-👥 Holders: ${holdersText}
-🏆 Biggest Buy (24h): ${biggestBuyText}
+${lines.join('\n')}
   `.trim();
 }
 

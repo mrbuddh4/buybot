@@ -25,6 +25,10 @@ export class PriceService {
   private hlpmmFactoryAddress: string | null;
   private hlpmmUsidAddress: string | null;
   private portfolioApiBaseUrl: string;
+  private explorerApiBaseUrl: string;
+  private explorerApiKey: string;
+  private statusMetricsDebugEnabled: boolean;
+  private statusMetricsDebugLoggedTokens: Set<string> = new Set();
   private paxUsdErrorLoggedAt: number = 0;
   private walletTotalUsdCache: Map<string, { value: number | null; expiresAt: number }> = new Map();
 
@@ -38,6 +42,148 @@ export class PriceService {
     this.hlpmmFactoryAddress = process.env.HLPMM_FACTORY_ADDRESS || null;
     this.hlpmmUsidAddress = process.env.HLPMM_USID_ADDRESS || null;
     this.portfolioApiBaseUrl = (process.env.PORTFOLIO_API_BASE_URL || 'https://us-east-1.user-stats.sidiora.exchange').replace(/\/+$/, '');
+    this.explorerApiBaseUrl = (process.env.BLOCK_EXPLORER_API_URL || 'https://paxscan.io/api').replace(/\/+$/, '');
+    this.explorerApiKey = process.env.BLOCK_EXPLORER_API_KEY || process.env.ETHERSCAN_API_KEY || '';
+    this.statusMetricsDebugEnabled = (process.env.STATUS_METRICS_DEBUG || 'false').toLowerCase() === 'true';
+  }
+
+  private async getPaxscanTokenStats(tokenAddress: string): Promise<Partial<TokenStatusMetrics>> {
+    const normalized = tokenAddress.toLowerCase();
+    const nowSec = Math.floor(Date.now() / 1000);
+    const dayAgoSec = nowSec - 24 * 60 * 60;
+    const routerAddress = this.routerAddress.toLowerCase();
+
+    const buildParams = (extra: Record<string, string>) => ({
+      module: 'account',
+      apikey: this.explorerApiKey,
+      ...extra,
+    });
+
+    const fetchResult = async (params: Record<string, string>): Promise<any[] | null> => {
+      try {
+        const response = await axios.get(this.explorerApiBaseUrl, {
+          params,
+          timeout: 8000,
+        });
+        const payload = response.data;
+        const result = payload?.result;
+        if (Array.isArray(result)) {
+          return result;
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    };
+
+    const fetchHolderCount = async (): Promise<number | null> => {
+      try {
+        const response = await axios.get(this.explorerApiBaseUrl, {
+          params: {
+            module: 'token',
+            action: 'tokenholdercount',
+            contractaddress: normalized,
+            apikey: this.explorerApiKey,
+          },
+          timeout: 8000,
+        });
+
+        const raw = response.data?.result;
+        const holderCount = typeof raw === 'string' || typeof raw === 'number'
+          ? parseFloat(String(raw).replace(/[,_\s]/g, ''))
+          : NaN;
+        if (!Number.isFinite(holderCount) || holderCount < 0) {
+          return null;
+        }
+        return Math.floor(holderCount);
+      } catch {
+        return null;
+      }
+    };
+
+    const transfers = await fetchResult(
+      buildParams({
+        action: 'tokentx',
+        contractaddress: normalized,
+        page: '1',
+        offset: '200',
+        sort: 'desc',
+      })
+    );
+
+    const holders = await fetchHolderCount();
+
+    if (!transfers || transfers.length === 0) {
+      return { holders };
+    }
+
+    const price = await this.getTokenPrice(normalized);
+    const priceInUsd = parseFloat(price?.priceInUsd || '0');
+    const hasUsdPrice = Number.isFinite(priceInUsd) && priceInUsd > 0;
+
+    const buyerSet = new Set<string>();
+    const sellerSet = new Set<string>();
+    let biggestBuyUsd = 0;
+    let volume24hUsd = 0;
+
+    for (const transfer of transfers) {
+      const timeStamp = parseInt(String(transfer?.timeStamp || '0'), 10);
+      if (!Number.isFinite(timeStamp) || timeStamp < dayAgoSec || timeStamp > nowSec + 300) {
+        continue;
+      }
+
+      const from = String(transfer?.from || '').toLowerCase();
+      const to = String(transfer?.to || '').toLowerCase();
+      const valueRaw = String(transfer?.value || '0');
+      const tokenDecimalRaw = String(transfer?.tokenDecimal || transfer?.tokenDecimals || '18');
+      const tokenDecimals = parseInt(tokenDecimalRaw, 10);
+
+      if (!/^\d+$/.test(valueRaw) || !Number.isFinite(tokenDecimals) || tokenDecimals < 0 || tokenDecimals > 30) {
+        continue;
+      }
+
+      let tokenAmount = 0;
+      try {
+        tokenAmount = parseFloat(ethers.formatUnits(BigInt(valueRaw), tokenDecimals));
+      } catch {
+        continue;
+      }
+
+      if (!Number.isFinite(tokenAmount) || tokenAmount <= 0) {
+        continue;
+      }
+
+      const transferUsd = hasUsdPrice ? tokenAmount * priceInUsd : 0;
+
+      if (from === routerAddress) {
+        if (to) {
+          buyerSet.add(to);
+        }
+        if (transferUsd > biggestBuyUsd) {
+          biggestBuyUsd = transferUsd;
+        }
+        volume24hUsd += transferUsd;
+        continue;
+      }
+
+      if (to === routerAddress) {
+        if (from) {
+          sellerSet.add(from);
+        }
+        volume24hUsd += transferUsd;
+      }
+    }
+
+    const buyers24h = buyerSet.size > 0 ? buyerSet.size : null;
+    const sellers24h = sellerSet.size > 0 ? sellerSet.size : null;
+
+    return {
+      holders,
+      buyers24h,
+      sellers24h,
+      volume24hUsd: volume24hUsd > 0 ? volume24hUsd : null,
+      biggestBuy24hUsd: biggestBuyUsd > 0 ? biggestBuyUsd : null,
+    };
   }
 
   private async getTokenFromPortfolioApi(tokenAddress: string): Promise<any | null> {
@@ -125,7 +271,10 @@ export class PriceService {
   private parseNumericField(source: any, keys: string[]): number | null {
     for (const key of keys) {
       const raw = source?.[key];
-      const value = typeof raw === 'string' || typeof raw === 'number' ? parseFloat(String(raw)) : NaN;
+      const normalizedRaw = typeof raw === 'string' ? raw.replace(/[,_\s]/g, '') : raw;
+      const value = typeof normalizedRaw === 'string' || typeof normalizedRaw === 'number'
+        ? parseFloat(String(normalizedRaw))
+        : NaN;
       if (Number.isFinite(value) && value > 0) {
         return value;
       }
@@ -136,7 +285,10 @@ export class PriceService {
   private parseNumericFieldAllowZero(source: any, keys: string[]): number | null {
     for (const key of keys) {
       const raw = source?.[key];
-      const value = typeof raw === 'string' || typeof raw === 'number' ? parseFloat(String(raw)) : NaN;
+      const normalizedRaw = typeof raw === 'string' ? raw.replace(/[,_\s]/g, '') : raw;
+      const value = typeof normalizedRaw === 'string' || typeof normalizedRaw === 'number'
+        ? parseFloat(String(normalizedRaw))
+        : NaN;
       if (Number.isFinite(value) && value >= 0) {
         return value;
       }
@@ -164,6 +316,52 @@ export class PriceService {
 
       if (value !== null) {
         return value;
+      }
+    }
+
+    return null;
+  }
+
+  private findNumericByKeysDeep(source: any, keys: string[], allowZero: boolean = true): number | null {
+    if (!source) {
+      return null;
+    }
+
+    const normalizedTargetKeys = new Set(
+      keys.map((key) => key.toLowerCase().replace(/[^a-z0-9]/g, ''))
+    );
+    const queue: any[] = [source];
+    const seen = new Set<any>();
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (!current || typeof current !== 'object') {
+        continue;
+      }
+
+      if (seen.has(current)) {
+        continue;
+      }
+      seen.add(current);
+
+      for (const [rawKey, rawValue] of Object.entries(current)) {
+        const normalizedKey = rawKey.toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (normalizedTargetKeys.has(normalizedKey)) {
+          const normalizedValue = typeof rawValue === 'string'
+            ? rawValue.replace(/[,_\s]/g, '')
+            : rawValue;
+          const numeric = typeof normalizedValue === 'string' || typeof normalizedValue === 'number'
+            ? parseFloat(String(normalizedValue))
+            : NaN;
+
+          if (Number.isFinite(numeric) && (allowZero ? numeric >= 0 : numeric > 0)) {
+            return numeric;
+          }
+        }
+
+        if (rawValue && typeof rawValue === 'object') {
+          queue.push(rawValue);
+        }
       }
     }
 
@@ -324,7 +522,28 @@ export class PriceService {
 
   async getTokenStatusMetrics(tokenAddress: string): Promise<TokenStatusMetrics> {
     try {
-      const data = await this.getTokenFromPortfolioApi(tokenAddress);
+      const normalized = tokenAddress.toLowerCase();
+      let data = await this.getTokenFromPortfolioApi(tokenAddress);
+      if (!data) {
+        const fallbackEndpoints = [
+          `${this.portfolioApiBaseUrl}/api/v1/tokens/${normalized}/stats`,
+          `${this.portfolioApiBaseUrl}/api/v1/token/${normalized}/stats`,
+          `${this.portfolioApiBaseUrl}/api/v1/markets/${normalized}`,
+        ];
+
+        for (const url of fallbackEndpoints) {
+          try {
+            const response = await axios.get(url, { timeout: 8000 });
+            if (response.data) {
+              data = response.data;
+              break;
+            }
+          } catch {
+            continue;
+          }
+        }
+      }
+
       const candidates = [
         data,
         data?.data,
@@ -335,15 +554,51 @@ export class PriceService {
         data?.data?.metrics,
       ];
 
+      const fromPortfolio = {
+        marketCap: false,
+        volume24h: false,
+        buyers24h: false,
+        sellers24h: false,
+        holders: false,
+        biggestBuy24h: false,
+      };
+
+      const fromExplorer = {
+        volume24h: false,
+        buyers24h: false,
+        sellers24h: false,
+        holders: false,
+        biggestBuy24h: false,
+      };
+
       let marketCapUsd = this.extractMetricFromCandidates(candidates, [
         'market_cap_usd',
         'marketCapUsd',
         'marketcap_usd',
+        'market_cap',
+        'marketCap',
         'fdv_usd',
         'fdvUsd',
       ]);
+      if (marketCapUsd !== null) {
+        fromPortfolio.marketCap = true;
+      }
+      if (marketCapUsd === null && data) {
+        marketCapUsd = this.findNumericByKeysDeep(data, [
+          'market_cap_usd',
+          'marketCapUsd',
+          'marketcap_usd',
+          'market_cap',
+          'marketCap',
+          'fdv_usd',
+          'fdvUsd',
+        ]);
+        if (marketCapUsd !== null) {
+          fromPortfolio.marketCap = true;
+        }
+      }
 
-      const volume24hUsd = this.extractMetricFromCandidates(candidates, [
+      let volume24hUsd = this.extractMetricFromCandidates(candidates, [
         'volume_24h_usd',
         'volume24hUsd',
         'trading_volume_24h_usd',
@@ -351,8 +606,24 @@ export class PriceService {
         'volume_24h',
         'volume24h',
       ]);
+      if (volume24hUsd !== null) {
+        fromPortfolio.volume24h = true;
+      }
+      if (volume24hUsd === null && data) {
+        volume24hUsd = this.findNumericByKeysDeep(data, [
+          'volume_24h_usd',
+          'volume24hUsd',
+          'trading_volume_24h_usd',
+          'tradingVolume24hUsd',
+          'volume_24h',
+          'volume24h',
+        ]);
+        if (volume24hUsd !== null) {
+          fromPortfolio.volume24h = true;
+        }
+      }
 
-      const buyers24h = this.extractMetricFromCandidates(
+      let buyers24h = this.extractMetricFromCandidates(
         candidates,
         [
           'buyers_24h',
@@ -361,11 +632,32 @@ export class PriceService {
           'uniqueBuyers24h',
           'buy_count_24h',
           'buyCount24h',
+          'buys_24h',
+          'buys24h',
         ],
         true
       );
+      if (buyers24h !== null) {
+        fromPortfolio.buyers24h = true;
+      }
+      if (buyers24h === null && data) {
+        const deepBuyers = this.findNumericByKeysDeep(data, [
+          'buyers_24h',
+          'buyers24h',
+          'unique_buyers_24h',
+          'uniqueBuyers24h',
+          'buy_count_24h',
+          'buyCount24h',
+          'buys_24h',
+          'buys24h',
+        ]);
+        buyers24h = deepBuyers !== null ? Math.floor(deepBuyers) : null;
+        if (buyers24h !== null) {
+          fromPortfolio.buyers24h = true;
+        }
+      }
 
-      const sellers24h = this.extractMetricFromCandidates(
+      let sellers24h = this.extractMetricFromCandidates(
         candidates,
         [
           'sellers_24h',
@@ -374,11 +666,32 @@ export class PriceService {
           'uniqueSellers24h',
           'sell_count_24h',
           'sellCount24h',
+          'sells_24h',
+          'sells24h',
         ],
         true
       );
+      if (sellers24h !== null) {
+        fromPortfolio.sellers24h = true;
+      }
+      if (sellers24h === null && data) {
+        const deepSellers = this.findNumericByKeysDeep(data, [
+          'sellers_24h',
+          'sellers24h',
+          'unique_sellers_24h',
+          'uniqueSellers24h',
+          'sell_count_24h',
+          'sellCount24h',
+          'sells_24h',
+          'sells24h',
+        ]);
+        sellers24h = deepSellers !== null ? Math.floor(deepSellers) : null;
+        if (sellers24h !== null) {
+          fromPortfolio.sellers24h = true;
+        }
+      }
 
-      const holders = this.extractMetricFromCandidates(
+      let holders = this.extractMetricFromCandidates(
         candidates,
         [
           'holders',
@@ -391,8 +704,26 @@ export class PriceService {
         ],
         true
       );
+      if (holders !== null) {
+        fromPortfolio.holders = true;
+      }
+      if (holders === null && data) {
+        const deepHolders = this.findNumericByKeysDeep(data, [
+          'holders',
+          'holders_count',
+          'holdersCount',
+          'holder_count',
+          'holderCount',
+          'total_holders',
+          'totalHolders',
+        ]);
+        holders = deepHolders !== null ? Math.floor(deepHolders) : null;
+        if (holders !== null) {
+          fromPortfolio.holders = true;
+        }
+      }
 
-      const biggestBuy24hUsd = this.extractMetricFromCandidates(candidates, [
+      let biggestBuy24hUsd = this.extractMetricFromCandidates(candidates, [
         'biggest_buy_usd_24h',
         'biggestBuyUsd24h',
         'max_buy_usd_24h',
@@ -400,6 +731,22 @@ export class PriceService {
         'recent_biggest_buy_usd',
         'recentBiggestBuyUsd',
       ]);
+      if (biggestBuy24hUsd !== null) {
+        fromPortfolio.biggestBuy24h = true;
+      }
+      if (biggestBuy24hUsd === null && data) {
+        biggestBuy24hUsd = this.findNumericByKeysDeep(data, [
+          'biggest_buy_usd_24h',
+          'biggestBuyUsd24h',
+          'max_buy_usd_24h',
+          'maxBuyUsd24h',
+          'recent_biggest_buy_usd',
+          'recentBiggestBuyUsd',
+        ]);
+        if (biggestBuy24hUsd !== null) {
+          fromPortfolio.biggestBuy24h = true;
+        }
+      }
 
       if (marketCapUsd === null) {
         const tokenInfo = await this.getTokenInfo(tokenAddress);
@@ -418,6 +765,71 @@ export class PriceService {
             marketCapUsd = priceInUsd * supply;
           }
         }
+      }
+
+      const needExplorerFallback =
+        volume24hUsd === null ||
+        buyers24h === null ||
+        sellers24h === null ||
+        holders === null ||
+        biggestBuy24hUsd === null;
+
+      if (needExplorerFallback) {
+        const explorerStats = await this.getPaxscanTokenStats(tokenAddress);
+
+        if (volume24hUsd === null && explorerStats.volume24hUsd !== undefined) {
+          volume24hUsd = explorerStats.volume24hUsd ?? null;
+          if (volume24hUsd !== null) {
+            fromExplorer.volume24h = true;
+          }
+        }
+        if (buyers24h === null && explorerStats.buyers24h !== undefined) {
+          buyers24h = explorerStats.buyers24h ?? null;
+          if (buyers24h !== null) {
+            fromExplorer.buyers24h = true;
+          }
+        }
+        if (sellers24h === null && explorerStats.sellers24h !== undefined) {
+          sellers24h = explorerStats.sellers24h ?? null;
+          if (sellers24h !== null) {
+            fromExplorer.sellers24h = true;
+          }
+        }
+        if (holders === null && explorerStats.holders !== undefined) {
+          holders = explorerStats.holders ?? null;
+          if (holders !== null) {
+            fromExplorer.holders = true;
+          }
+        }
+        if (biggestBuy24hUsd === null && explorerStats.biggestBuy24hUsd !== undefined) {
+          biggestBuy24hUsd = explorerStats.biggestBuy24hUsd ?? null;
+          if (biggestBuy24hUsd !== null) {
+            fromExplorer.biggestBuy24h = true;
+          }
+        }
+      }
+
+      if (this.statusMetricsDebugEnabled && !this.statusMetricsDebugLoggedTokens.has(normalized)) {
+        this.statusMetricsDebugLoggedTokens.add(normalized);
+        logger.info('Status metrics source debug', {
+          token: normalized,
+          sources: {
+            marketCap: fromPortfolio.marketCap ? 'portfolio' : marketCapUsd !== null ? 'computed' : 'missing',
+            volume24h: fromPortfolio.volume24h ? 'portfolio' : fromExplorer.volume24h ? 'explorer' : 'missing',
+            buyers24h: fromPortfolio.buyers24h ? 'portfolio' : fromExplorer.buyers24h ? 'explorer' : 'missing',
+            sellers24h: fromPortfolio.sellers24h ? 'portfolio' : fromExplorer.sellers24h ? 'explorer' : 'missing',
+            holders: fromPortfolio.holders ? 'portfolio' : fromExplorer.holders ? 'explorer' : 'missing',
+            biggestBuy24h: fromPortfolio.biggestBuy24h ? 'portfolio' : fromExplorer.biggestBuy24h ? 'explorer' : 'missing',
+          },
+          values: {
+            marketCapUsd,
+            volume24hUsd,
+            buyers24h,
+            sellers24h,
+            holders,
+            biggestBuy24hUsd,
+          },
+        });
       }
 
       return {
