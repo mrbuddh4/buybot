@@ -123,8 +123,15 @@ export class PriceService {
 
     const buyerSet = new Set<string>();
     const sellerSet = new Set<string>();
+    const genericRecipientSet = new Set<string>();
+    const genericSenderSet = new Set<string>();
     let biggestBuyUsd = 0;
     let volume24hUsd = 0;
+    let routerClassifiedTransferCount = 0;
+    let genericTransferCount = 0;
+    let genericBiggestTransferUsd = 0;
+
+    const zeroAddress = '0x0000000000000000000000000000000000000000';
 
     for (const transfer of transfers) {
       const timeStamp = parseInt(String(transfer?.timeStamp || '0'), 10);
@@ -155,7 +162,21 @@ export class PriceService {
 
       const transferUsd = hasUsdPrice ? tokenAmount * priceInUsd : 0;
 
+      if (from && from !== zeroAddress && from !== routerAddress) {
+        genericSenderSet.add(from);
+      }
+      if (to && to !== zeroAddress && to !== routerAddress) {
+        genericRecipientSet.add(to);
+      }
+      if (transferUsd > 0) {
+        genericTransferCount += 1;
+        if (transferUsd > genericBiggestTransferUsd) {
+          genericBiggestTransferUsd = transferUsd;
+        }
+      }
+
       if (from === routerAddress) {
+        routerClassifiedTransferCount += 1;
         if (to) {
           buyerSet.add(to);
         }
@@ -167,6 +188,7 @@ export class PriceService {
       }
 
       if (to === routerAddress) {
+        routerClassifiedTransferCount += 1;
         if (from) {
           sellerSet.add(from);
         }
@@ -174,8 +196,43 @@ export class PriceService {
       }
     }
 
-    const buyers24h = buyerSet.size > 0 ? buyerSet.size : null;
-    const sellers24h = sellerSet.size > 0 ? sellerSet.size : null;
+    let buyers24h = buyerSet.size > 0 ? buyerSet.size : null;
+    let sellers24h = sellerSet.size > 0 ? sellerSet.size : null;
+
+    if (routerClassifiedTransferCount === 0) {
+      buyers24h = genericRecipientSet.size > 0 ? genericRecipientSet.size : buyers24h;
+      sellers24h = genericSenderSet.size > 0 ? genericSenderSet.size : sellers24h;
+
+      if (volume24hUsd <= 0 && genericTransferCount > 0) {
+        volume24hUsd = volume24hUsd + (hasUsdPrice ? genericTransferCount > 0 ? transfers
+          .filter((transfer) => {
+            const timeStamp = parseInt(String(transfer?.timeStamp || '0'), 10);
+            return Number.isFinite(timeStamp) && timeStamp >= dayAgoSec && timeStamp <= nowSec + 300;
+          })
+          .reduce((sum, transfer) => {
+            const valueRaw = String(transfer?.value || '0');
+            const tokenDecimalRaw = String(transfer?.tokenDecimal || transfer?.tokenDecimals || '18');
+            const tokenDecimals = parseInt(tokenDecimalRaw, 10);
+            if (!/^\d+$/.test(valueRaw) || !Number.isFinite(tokenDecimals) || tokenDecimals < 0 || tokenDecimals > 30) {
+              return sum;
+            }
+            try {
+              const tokenAmount = parseFloat(ethers.formatUnits(BigInt(valueRaw), tokenDecimals));
+              if (!Number.isFinite(tokenAmount) || tokenAmount <= 0) {
+                return sum;
+              }
+              return sum + tokenAmount * priceInUsd;
+            } catch {
+              return sum;
+            }
+          }, 0)
+          : 0 : 0);
+      }
+
+      if (biggestBuyUsd <= 0 && genericBiggestTransferUsd > 0) {
+        biggestBuyUsd = genericBiggestTransferUsd;
+      }
+    }
 
     return {
       holders,
