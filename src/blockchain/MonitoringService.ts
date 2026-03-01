@@ -1146,6 +1146,7 @@ export class MonitoringService {
           tokenAddress,
           tokenName: tokenInfo?.name || watchedToken.symbol || 'Unknown Token',
           tokenSymbol: tokenInfo?.symbol || watchedToken.symbol || 'UNKNOWN',
+          is24hMature: has24hHistory,
           tokenPriceUsd,
           marketCapUsd: metrics.marketCapUsd,
           volume24hUsd: effectiveVolume24hUsd,

@@ -25,6 +25,7 @@ interface HourlyStatusData {
   tokenAddress: string;
   tokenName: string;
   tokenSymbol: string;
+  is24hMature?: boolean;
   tokenPriceUsd: number | null;
   marketCapUsd: number | null;
   volume24hUsd: number | null;
@@ -193,6 +194,10 @@ export function formatHourlyStatusUpdate(data: HourlyStatusData): string {
 
   if (buyersVsSellersText) {
     lines.push(`⚖️ Buys/Sells: ${buyersVsSellersText}`);
+  }
+
+  if (data.is24hMature === false) {
+    lines.push('🕒 24h metrics: collecting data (available after 24h of tracking)');
   }
 
   if (data.holders !== null) {
