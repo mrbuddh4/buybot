@@ -226,7 +226,7 @@ export class MonitoringService {
     from: string,
     to: string,
     tx: ethers.TransactionResponse
-  ): { type: 'buy'; trader: string } | null {
+  ): { type: 'buy' | 'sell'; trader: string } | null {
     const normalizedFrom = from.toLowerCase();
     const normalizedTo = to.toLowerCase();
     const normalizedRouter = this.routerAddress.toLowerCase();
@@ -235,6 +235,10 @@ export class MonitoringService {
 
     if (normalizedFrom === normalizedRouter) {
       return { type: 'buy', trader: to };
+    }
+
+    if (normalizedTo === normalizedRouter) {
+      return { type: 'sell', trader: from };
     }
 
     if (normalizedTxTo === normalizedRouter) {
@@ -523,6 +527,11 @@ export class MonitoringService {
       const marketCapUsd = tokenInfo?.marketCapUsd
         || ((parseFloat(tokenInfo?.totalSupply || '0') || 0) * priceInUsdNumeric).toString();
 
+      const alreadyDetected = await this.db.hasDetectedTransaction(swapEvent.txHash);
+      if (alreadyDetected) {
+        return;
+      }
+
       const balanceContract = new ethers.Contract(
         tokenAddress,
         ['function balanceOf(address) view returns (uint256)'],
@@ -558,8 +567,18 @@ export class MonitoringService {
         ? `$${Math.max(0, Math.round(walletTotalUsdNumeric)).toLocaleString()}`
         : 'N/A';
 
-      const alreadyDetected = await this.db.hasDetectedTransaction(swapEvent.txHash);
-      if (alreadyDetected) {
+      if (type === 'sell') {
+        await this.db.saveDetectedTransaction(
+          tokenAddress,
+          swapEvent.txHash,
+          'sell',
+          trader,
+          value.toString(),
+          '0',
+          totalUsdValue
+        );
+        await this.db.setTraderPosition(tokenAddress, trader, currentHoldingsToken);
+        logger.info(`Tracked SELL (AMM) for status metrics: ${tokenInfo?.symbol || tokenAddress} - ${swapEvent.txHash}`);
         return;
       }
 
@@ -736,9 +755,10 @@ export class MonitoringService {
       if (!txHash || !blockNumber) return;
 
       const isBuy = tokenIn.toLowerCase() === this.hlpmmUsidAddress;
-      if (!isBuy) return;
+      const isSell = tokenOut.toLowerCase() === this.hlpmmUsidAddress;
+      if (!isBuy && !isSell) return;
 
-      const tokenAddress = tokenOut.toLowerCase();
+      const tokenAddress = (isBuy ? tokenOut : tokenIn).toLowerCase();
 
       if (!this.monitoredTokens.has(tokenAddress)) {
         const resolved = await this.resolveHLPMMPoolToken(pool);
@@ -755,8 +775,10 @@ export class MonitoringService {
 
       const tokenInfo = await this.priceService.getTokenInfo(tokenAddress);
       const tokenDecimals = tokenInfo?.decimals ?? 18;
-      const tokenAmount = ethers.formatUnits(amountOut, tokenDecimals);
-      const usidAmount = ethers.formatEther(amountIn);
+      const tokenAmountRaw = isBuy ? amountOut : amountIn;
+      const usidAmountRaw = isBuy ? amountIn : amountOut;
+      const tokenAmount = ethers.formatUnits(tokenAmountRaw, tokenDecimals);
+      const usidAmount = ethers.formatEther(usidAmountRaw);
 
       const tokenAmountNumeric = parseFloat(tokenAmount || '0');
       const usidAmountNumeric = parseFloat(usidAmount || '0');
@@ -788,19 +810,23 @@ export class MonitoringService {
       const currentHoldingsNumeric = parseFloat(currentHoldingsToken || '0') || 0;
       const currentHoldingsUsdNumeric = currentHoldingsNumeric * parseFloat(effectivePriceInUsd);
 
-      const positionLabel = await this.computePositionLabel(
-        tokenAddress,
-        buyer,
-        txHash,
-        blockNumber,
-        txIndex,
-        currentHoldingsNumeric,
-        tokenAmountNumeric
-      );
+      const positionLabel = isBuy
+        ? await this.computePositionLabel(
+            tokenAddress,
+            buyer,
+            txHash,
+            blockNumber,
+            txIndex,
+            currentHoldingsNumeric,
+            tokenAmountNumeric
+          )
+        : 'N/A';
 
-      logger.info(
-        `Computed position (HLPMM): token=${tokenInfo?.symbol || tokenAddress} trader=${buyer} position=${positionLabel} tx=${txHash}`
-      );
+      if (isBuy) {
+        logger.info(
+          `Computed position (HLPMM): token=${tokenInfo?.symbol || tokenAddress} trader=${buyer} position=${positionLabel} tx=${txHash}`
+        );
+      }
 
       const holdingsTokenDisplay = currentHoldingsNumeric >= 1_000_000
         ? `${(currentHoldingsNumeric / 1_000_000).toFixed(3)}M`
@@ -812,6 +838,21 @@ export class MonitoringService {
       const walletTotalUsdDisplay = walletTotalUsdNumeric !== null
         ? `$${Math.max(0, Math.round(walletTotalUsdNumeric)).toLocaleString()}`
         : 'N/A';
+
+      if (isSell) {
+        await this.db.saveDetectedTransaction(
+          tokenAddress,
+          txHash,
+          'sell',
+          buyer,
+          tokenAmountRaw.toString(),
+          usidAmount,
+          totalUsdValue
+        );
+        await this.db.setTraderPosition(tokenAddress, buyer, currentHoldingsToken);
+        logger.info(`Tracked SELL (HLPMM) for status metrics: ${tokenInfo?.symbol || tokenAddress} - ${txHash}`);
+        return;
+      }
 
       const watchers = await this.db.getTokenWatchers(tokenAddress);
       if (watchers.length === 0) {

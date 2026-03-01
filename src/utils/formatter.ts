@@ -192,7 +192,7 @@ export function formatHourlyStatusUpdate(data: HourlyStatusData): string {
   }
 
   if (buyersVsSellersText) {
-    lines.push(`⚖️ Buyers vs Sellers: ${buyersVsSellersText}`);
+    lines.push(`⚖️ Buys/Sells: ${buyersVsSellersText}`);
   }
 
   if (data.holders !== null) {
