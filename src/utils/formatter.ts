@@ -173,8 +173,10 @@ export function formatHourlyStatusUpdate(data: HourlyStatusData): string {
     lines.push(`💲 Price: ${formatTokenUsdPrice(String(data.tokenPriceUsd))} USDC`);
   }
 
-  if (data.volume24hUsd !== null) {
-    lines.push(`📊 24h Volume: ${formatUsdCompact(data.volume24hUsd)} USDC`);
+  const volume24hValue = data.volume24hUsd;
+  const has24hVolume = volume24hValue !== null;
+  if (volume24hValue !== null) {
+    lines.push(`📊 24h Volume: ${formatUsdCompact(volume24hValue)} USDC`);
   }
 
   let buyersVsSellersText: string | null = null;
@@ -192,12 +194,15 @@ export function formatHourlyStatusUpdate(data: HourlyStatusData): string {
     }
   }
 
+  const hasBuySellRatio = buyersVsSellersText !== null;
   if (buyersVsSellersText) {
     lines.push(`⚖️ Buys/Sells: ${buyersVsSellersText}`);
   }
 
   if (data.is24hMature === false) {
     lines.push('🕒 24h metrics: collecting data (available after 24h of tracking)');
+  } else if (!has24hVolume && !hasBuySellRatio) {
+    lines.push('🕒 24h metrics: unavailable right now');
   }
 
   if (data.holders !== null) {
