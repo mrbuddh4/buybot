@@ -416,20 +416,21 @@ export class MonitoringService {
     currentHoldingsNumeric: number,
     deltaAmountNumeric: number
   ): Promise<string> {
+    const inferredPrevious = Math.max(0, currentHoldingsNumeric - deltaAmountNumeric);
+
+    if (inferredPrevious > 0) {
+      return this.formatPositionPercent(currentHoldingsNumeric, inferredPrevious);
+    }
+
     const previousSnapshot = await this.db.getTraderPosition(tokenAddress, walletAddress);
     const previousHoldingsNumeric = parseFloat(previousSnapshot?.holdings_token || '0') || 0;
-    const inferredPrevious = Math.max(0, currentHoldingsNumeric - deltaAmountNumeric);
 
     if (previousSnapshot && previousHoldingsNumeric > 0) {
       if (currentHoldingsNumeric >= previousHoldingsNumeric) {
-        return this.formatPositionPercent(currentHoldingsNumeric, previousHoldingsNumeric);
-      }
-
-      if (inferredPrevious > 0) {
         logger.info(
-          `Position baseline fallback applied: token=${tokenAddress} trader=${walletAddress} tx=${txHash} snapshot=${previousHoldingsNumeric.toFixed(6)} inferred=${inferredPrevious.toFixed(6)} current=${currentHoldingsNumeric.toFixed(6)}`
+          `Position snapshot fallback applied: token=${tokenAddress} trader=${walletAddress} tx=${txHash} snapshot=${previousHoldingsNumeric.toFixed(6)} inferred=${inferredPrevious.toFixed(6)} current=${currentHoldingsNumeric.toFixed(6)}`
         );
-        return this.formatPositionPercent(currentHoldingsNumeric, inferredPrevious);
+        return this.formatPositionPercent(currentHoldingsNumeric, previousHoldingsNumeric);
       }
 
       logger.info(
@@ -450,11 +451,7 @@ export class MonitoringService {
       return 'NEW';
     }
 
-    if (inferredPrevious <= 0) {
-      return 'NEW';
-    }
-
-    return this.formatPositionPercent(currentHoldingsNumeric, inferredPrevious);
+    return 'NEW';
   }
 
   private async handleTransferEvent(
