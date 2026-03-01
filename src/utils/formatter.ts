@@ -199,7 +199,7 @@ export function formatHourlyStatusUpdate(data: HourlyStatusData): string {
   }
 
   return `
-<b>⏱️ Hourly Status Update</b>
+<b>⏱️ Status Update</b>
 
 <a href="${tokenUrl}">${escapedTokenName} (${escapedTokenSymbol})</a>
 ${lines.join('\n')}
