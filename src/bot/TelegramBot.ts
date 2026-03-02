@@ -97,6 +97,12 @@ export class TelegramBot {
     this.bot.onText(/\/statusnow/, (msg) => {
       void this.executeCommandIfAuthorized(msg, () => this.commandHandler.handleStatusNow(msg));
     });
+    this.bot.onText(/\/statusupdates (.+)/, (msg, match) => {
+      void this.executeCommandIfAuthorized(msg, () => this.commandHandler.handleStatusUpdates(msg, match));
+    });
+    this.bot.onText(/\/statusinterval (.+)/, (msg, match) => {
+      void this.executeCommandIfAuthorized(msg, () => this.commandHandler.handleStatusInterval(msg, match));
+    });
     this.bot.on('callback_query', (query) => this.commandHandler.handleCallbackQuery(query));
     this.bot.on('message', (msg) => this.commandHandler.handlePendingInput(msg));
     this.bot.on('new_chat_members', (msg) => {
@@ -160,6 +166,8 @@ export class TelegramBot {
       { command: 'settings', description: 'Open settings panel' },
       { command: 'buylinks', description: 'View alert button links' },
       { command: 'statusnow', description: 'Send status updates now' },
+      { command: 'statusupdates', description: 'Toggle automatic status updates' },
+      { command: 'statusinterval', description: 'Set automatic status interval (min)' },
       { command: 'help', description: 'Show available commands' },
     ];
 
@@ -171,6 +179,8 @@ export class TelegramBot {
       { command: 'price', description: 'Check token price' },
       { command: 'settings', description: 'Open group settings' },
       { command: 'statusnow', description: 'Send status updates now' },
+      { command: 'statusupdates', description: 'Toggle automatic status updates' },
+      { command: 'statusinterval', description: 'Set automatic status interval (min)' },
       { command: 'help', description: 'Show available commands' },
     ];
 

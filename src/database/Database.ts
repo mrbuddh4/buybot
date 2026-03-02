@@ -58,6 +58,9 @@ export interface ChatSettings {
   min_buy_usdc: number;
   icon_multiplier: number;
   buy_icon_pattern: string;
+  status_updates_enabled: boolean;
+  status_interval_minutes: number | null;
+  status_last_sent_at: string | null;
   alert_media_type: 'photo' | 'animation' | null;
   alert_media_file_id: string | null;
 }
@@ -228,6 +231,9 @@ export class Database {
           min_buy_usdc DOUBLE PRECISION DEFAULT 0,
           icon_multiplier INTEGER DEFAULT 1,
           buy_icon_pattern TEXT DEFAULT '🟢⚔️',
+          status_updates_enabled BOOLEAN DEFAULT TRUE,
+          status_interval_minutes INTEGER,
+          status_last_sent_at TIMESTAMPTZ,
           alert_media_type TEXT,
           alert_media_file_id TEXT,
           updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
@@ -247,6 +253,9 @@ export class Database {
       await this.addColumnIfMissing('chat_settings', 'alert_media_type', 'TEXT');
       await this.addColumnIfMissing('chat_settings', 'alert_media_file_id', 'TEXT');
       await this.addColumnIfMissing('chat_settings', 'buy_icon_pattern', "TEXT DEFAULT '🟢⚔️'");
+      await this.addColumnIfMissing('chat_settings', 'status_updates_enabled', 'BOOLEAN DEFAULT TRUE');
+      await this.addColumnIfMissing('chat_settings', 'status_interval_minutes', 'INTEGER');
+      await this.addColumnIfMissing('chat_settings', 'status_last_sent_at', 'TIMESTAMPTZ');
       await this.addColumnIfMissing('watched_tokens', 'alert_media_type', 'TEXT');
       await this.addColumnIfMissing('watched_tokens', 'alert_media_file_id', 'TEXT');
       await this.addColumnIfMissing('detected_transactions', 'transaction_value_usd', 'DOUBLE PRECISION');
@@ -634,7 +643,17 @@ export class Database {
   async getChatSettings(chatId: number): Promise<ChatSettings> {
     try {
       const { rows } = await this.pool.query(
-        'SELECT min_buy_usdc, icon_multiplier, buy_icon_pattern, alert_media_type, alert_media_file_id FROM chat_settings WHERE chat_id = $1',
+        `SELECT
+           min_buy_usdc,
+           icon_multiplier,
+           buy_icon_pattern,
+           status_updates_enabled,
+           status_interval_minutes,
+           status_last_sent_at,
+           alert_media_type,
+           alert_media_file_id
+         FROM chat_settings
+         WHERE chat_id = $1`,
         [chatId]
       );
       const row = rows[0];
@@ -644,6 +663,9 @@ export class Database {
           min_buy_usdc: 0,
           icon_multiplier: 1,
           buy_icon_pattern: '🟢⚔️',
+          status_updates_enabled: true,
+          status_interval_minutes: null,
+          status_last_sent_at: null,
           alert_media_type: null,
           alert_media_file_id: null,
         };
@@ -653,6 +675,11 @@ export class Database {
         min_buy_usdc: Number(row.min_buy_usdc) || 0,
         icon_multiplier: Math.max(1, Number(row.icon_multiplier) || 1),
         buy_icon_pattern: String(row.buy_icon_pattern || '🟢⚔️').trim() || '🟢⚔️',
+        status_updates_enabled: row.status_updates_enabled !== false,
+        status_interval_minutes: Number.isFinite(Number(row.status_interval_minutes))
+          ? Math.max(5, Math.min(1440, Math.floor(Number(row.status_interval_minutes))))
+          : null,
+        status_last_sent_at: row.status_last_sent_at ? new Date(row.status_last_sent_at).toISOString() : null,
         alert_media_type: row.alert_media_type === 'photo' || row.alert_media_type === 'animation'
           ? row.alert_media_type
           : null,
@@ -700,6 +727,46 @@ export class Database {
       );
     } catch (error) {
       logger.error('Error setting buy icon pattern:', error);
+      throw error;
+    }
+  }
+
+  async setStatusUpdatesEnabled(chatId: number, enabled: boolean): Promise<void> {
+    try {
+      await this.pool.query('INSERT INTO chat_settings (chat_id) VALUES ($1) ON CONFLICT (chat_id) DO NOTHING', [chatId]);
+      await this.pool.query(
+        'UPDATE chat_settings SET status_updates_enabled = $1, updated_at = CURRENT_TIMESTAMP WHERE chat_id = $2',
+        [enabled, chatId]
+      );
+    } catch (error) {
+      logger.error('Error setting status updates enabled flag:', error);
+      throw error;
+    }
+  }
+
+  async setStatusIntervalMinutes(chatId: number, intervalMinutes: number): Promise<void> {
+    try {
+      const safeInterval = Math.max(5, Math.min(1440, Math.floor(intervalMinutes)));
+      await this.pool.query('INSERT INTO chat_settings (chat_id) VALUES ($1) ON CONFLICT (chat_id) DO NOTHING', [chatId]);
+      await this.pool.query(
+        'UPDATE chat_settings SET status_interval_minutes = $1, updated_at = CURRENT_TIMESTAMP WHERE chat_id = $2',
+        [safeInterval, chatId]
+      );
+    } catch (error) {
+      logger.error('Error setting status interval minutes:', error);
+      throw error;
+    }
+  }
+
+  async markStatusUpdateSent(chatId: number, sentAt: Date = new Date()): Promise<void> {
+    try {
+      await this.pool.query('INSERT INTO chat_settings (chat_id) VALUES ($1) ON CONFLICT (chat_id) DO NOTHING', [chatId]);
+      await this.pool.query(
+        'UPDATE chat_settings SET status_last_sent_at = $1, updated_at = CURRENT_TIMESTAMP WHERE chat_id = $2',
+        [sentAt.toISOString(), chatId]
+      );
+    } catch (error) {
+      logger.error('Error marking status update sent timestamp:', error);
       throw error;
     }
   }

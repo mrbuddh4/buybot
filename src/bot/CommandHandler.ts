@@ -18,7 +18,8 @@ type PendingConfigType =
   | 'media'
   | 'tokenmedia_set_addr'
   | 'tokenmedia_media'
-  | 'tokenmedia_clear_addr';
+  | 'tokenmedia_clear_addr'
+  | 'statusinterval';
 
 export class CommandHandler {
   private bot: TelegramBot;
@@ -61,6 +62,8 @@ I'll notify you whenever tokens you're watching are bought or sold on the blockc
 /buylinks - View current alert links
 /clearlinks - Remove custom alert links
 /statusnow - Send token status update now
+/statusupdates <on|off> - Toggle automatic status updates
+/statusinterval <minutes> - Set automatic status interval
 /settings - Open group settings panel
 /help - Show all commands
 
@@ -93,6 +96,8 @@ Add me to a group to monitor tokens for everyone!
 /buylinks - View current alert links
 /clearlinks - Remove custom alert links
 /statusnow - Send token status update now
+/statusupdates <on|off> - Toggle automatic status updates
+/statusinterval <minutes> - Set automatic status interval
 /settings - Open settings panel
 
 **How it works:**
@@ -169,6 +174,18 @@ Add me to a group to monitor tokens for everyone!
         case 'cfg:addtoken':
           this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'addtoken');
           await this.bot.sendMessage(chatId, 'Send token contract address to add to watchlist.');
+          break;
+        case 'cfg:status_toggle': {
+          const settings = await this.db.getChatSettings(chatId);
+          const nextEnabled = !settings.status_updates_enabled;
+          await this.db.setStatusUpdatesEnabled(chatId, nextEnabled);
+          await this.bot.sendMessage(chatId, `✅ Automatic status updates ${nextEnabled ? 'enabled' : 'disabled'}.`);
+          await this.showSettingsMenu(chatId, message.message_id);
+          break;
+        }
+        case 'cfg:status_interval':
+          this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'statusinterval');
+          await this.bot.sendMessage(chatId, 'Send status interval in minutes (5-1440).');
           break;
         case 'cfg:media':
           this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'media');
@@ -412,6 +429,20 @@ Add me to a group to monitor tokens for everyone!
         await this.trySetHLPMMTokenImage(chatId, tokenAddress);
 
         await this.bot.sendMessage(chatId, `✅ Added ${tokenInfo.symbol} to watchlist.`);
+        await this.showSettingsMenu(chatId);
+        return;
+      }
+
+      if (pending === 'statusinterval') {
+        const intervalMinutes = parseInt(text, 10);
+        if (!Number.isFinite(intervalMinutes) || intervalMinutes < 5 || intervalMinutes > 1440) {
+          await this.bot.sendMessage(chatId, '❌ Invalid value. Send an integer from 5 to 1440 minutes.');
+          return;
+        }
+
+        await this.db.setStatusIntervalMinutes(chatId, intervalMinutes);
+        this.pendingConfigInputs.delete(key);
+        await this.bot.sendMessage(chatId, `✅ Status update interval set to ${intervalMinutes} minute(s).`);
         await this.showSettingsMenu(chatId);
         return;
       }
@@ -714,6 +745,67 @@ Updated: ${new Date().toLocaleString()}
     }
   }
 
+  async handleStatusUpdates(msg: TelegramBot.Message, match: RegExpExecArray | null): Promise<void> {
+    const chatId = msg.chat.id;
+    const userId = msg.from?.id;
+
+    if (!userId) {
+      await this.bot.sendMessage(chatId, '❌ Could not identify user.');
+      return;
+    }
+
+    if (!match) {
+      await this.bot.sendMessage(chatId, '❌ Usage: /statusupdates <on|off>');
+      return;
+    }
+
+    const canManage = await this.canManageConfig(msg.chat, userId);
+    if (!canManage) {
+      await this.bot.sendMessage(chatId, '❌ Only group admins can change status update settings.');
+      return;
+    }
+
+    const raw = match[1].trim().toLowerCase();
+    if (raw !== 'on' && raw !== 'off') {
+      await this.bot.sendMessage(chatId, '❌ Usage: /statusupdates <on|off>');
+      return;
+    }
+
+    const enabled = raw === 'on';
+    await this.db.setStatusUpdatesEnabled(chatId, enabled);
+    await this.bot.sendMessage(chatId, `✅ Automatic status updates ${enabled ? 'enabled' : 'disabled'}.`);
+  }
+
+  async handleStatusInterval(msg: TelegramBot.Message, match: RegExpExecArray | null): Promise<void> {
+    const chatId = msg.chat.id;
+    const userId = msg.from?.id;
+
+    if (!userId) {
+      await this.bot.sendMessage(chatId, '❌ Could not identify user.');
+      return;
+    }
+
+    if (!match) {
+      await this.bot.sendMessage(chatId, '❌ Usage: /statusinterval <minutes>');
+      return;
+    }
+
+    const canManage = await this.canManageConfig(msg.chat, userId);
+    if (!canManage) {
+      await this.bot.sendMessage(chatId, '❌ Only group admins can change status update settings.');
+      return;
+    }
+
+    const intervalMinutes = parseInt(match[1].trim(), 10);
+    if (!Number.isFinite(intervalMinutes) || intervalMinutes < 5 || intervalMinutes > 1440) {
+      await this.bot.sendMessage(chatId, '❌ Invalid value. Send an integer from 5 to 1440 minutes.');
+      return;
+    }
+
+    await this.db.setStatusIntervalMinutes(chatId, intervalMinutes);
+    await this.bot.sendMessage(chatId, `✅ Status update interval set to ${intervalMinutes} minute(s).`);
+  }
+
   private async setLink(
     msg: TelegramBot.Message,
     match: RegExpExecArray | null,
@@ -800,6 +892,8 @@ Updated: ${new Date().toLocaleString()}
     const mediaStatus = settings.alert_media_file_id
       ? settings.alert_media_type === 'animation' ? '✅ GIF' : '✅ Image'
       : '❌ None';
+    const statusEnabledText = settings.status_updates_enabled ? '✅ On' : '❌ Off';
+    const statusIntervalText = `${settings.status_interval_minutes ?? 60} min`;
 
     const text = [
       '⚙️ Group Buy Bot Settings',
@@ -807,6 +901,8 @@ Updated: ${new Date().toLocaleString()}
       `Min Buy: $${settings.min_buy_usdc.toFixed(2)} USDC`,
       `Icon Scale: x${settings.icon_multiplier}`,
       `Buy Icons: ${settings.buy_icon_pattern}`,
+      `Auto Status: ${statusEnabledText}`,
+      `Status Interval: ${statusIntervalText}`,
       `Watched Tokens: ${tokens.length}`,
       `Alert Media: ${mediaStatus}`,
       `Website: ${links.website_url ? '✅' : '❌'}`,
@@ -822,6 +918,10 @@ Updated: ${new Date().toLocaleString()}
         ],
         [
           { text: 'Buy Icons', callback_data: 'cfg:buyicons' },
+        ],
+        [
+          { text: `Status ${settings.status_updates_enabled ? 'On' : 'Off'}`, callback_data: 'cfg:status_toggle' },
+          { text: `Interval ${settings.status_interval_minutes ?? 60}m`, callback_data: 'cfg:status_interval' },
         ],
         [
           { text: 'Add Token', callback_data: 'cfg:addtoken' },

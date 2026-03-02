@@ -1027,11 +1027,18 @@ export class MonitoringService {
   }
 
   private getHourlyStatusIntervalMs(): number {
+    const schedulerTickMinutes = parseInt(process.env.STATUS_SCHEDULER_TICK_MINUTES || '5', 10);
+    const safeTickMinutes = Number.isFinite(schedulerTickMinutes)
+      ? Math.max(1, Math.min(60, schedulerTickMinutes))
+      : 5;
+    return safeTickMinutes * 60 * 1000;
+  }
+
+  private getDefaultStatusIntervalMinutes(): number {
     const configuredMinutes = parseInt(process.env.HOURLY_STATUS_INTERVAL_MINUTES || '60', 10);
-    const safeMinutes = Number.isFinite(configuredMinutes)
+    return Number.isFinite(configuredMinutes)
       ? Math.max(5, Math.min(1440, configuredMinutes))
       : 60;
-    return safeMinutes * 60 * 1000;
   }
 
   private getDelayToNextStatusBoundaryMs(intervalMs: number): number {
@@ -1058,6 +1065,7 @@ export class MonitoringService {
     }
 
     const intervalMs = this.getHourlyStatusIntervalMs();
+    const defaultStatusIntervalMinutes = this.getDefaultStatusIntervalMinutes();
     const alignToClock = (process.env.HOURLY_STATUS_ALIGN_TO_CLOCK || 'true').toLowerCase() !== 'false';
 
     if (!alignToClock) {
@@ -1065,7 +1073,9 @@ export class MonitoringService {
         void this.sendHourlyStatusUpdates();
       }, intervalMs);
 
-      logger.info(`Hourly status updates scheduled every ${Math.round(intervalMs / 60000)} minute(s) from startup`);
+      logger.info(
+        `Status scheduler tick every ${Math.round(intervalMs / 60000)} minute(s) from startup (default chat interval ${defaultStatusIntervalMinutes} minute(s))`
+      );
       return;
     }
 
@@ -1082,7 +1092,7 @@ export class MonitoringService {
     }, initialDelayMs);
 
     logger.info(
-      `Hourly status updates scheduled on clock boundary every ${Math.round(intervalMs / 60000)} minute(s); first run at ${firstRunAt.toISOString()}`
+      `Status scheduler tick on clock boundary every ${Math.round(intervalMs / 60000)} minute(s); first run at ${firstRunAt.toISOString()} (default chat interval ${defaultStatusIntervalMinutes} minute(s))`
     );
   }
 
@@ -1097,6 +1107,11 @@ export class MonitoringService {
 
     this.statusUpdateInProgress = true;
     try {
+      const runStartedAt = new Date();
+      const defaultStatusIntervalMinutes = this.getDefaultStatusIntervalMinutes();
+      const autoModeChatEligibility = new Map<number, boolean>();
+      const chatsWithDeliveredStatus = new Set<number>();
+
       const watchedTokens = chatId !== undefined
         ? (await this.db.getWatchedTokens(chatId)).map((token) => ({
             token_address: token.address,
@@ -1168,11 +1183,40 @@ export class MonitoringService {
 
         for (const watcher of watchers) {
           try {
+            if (chatId === undefined) {
+              let shouldSend = autoModeChatEligibility.get(watcher.chat_id);
+
+              if (shouldSend === undefined) {
+                const watcherSettings = await this.db.getChatSettings(watcher.chat_id);
+                const statusEnabled = watcherSettings.status_updates_enabled !== false;
+                const intervalMinutes = watcherSettings.status_interval_minutes ?? defaultStatusIntervalMinutes;
+                const lastSentAt = watcherSettings.status_last_sent_at
+                  ? new Date(watcherSettings.status_last_sent_at)
+                  : null;
+
+                const intervalMs = intervalMinutes * 60 * 1000;
+                shouldSend = statusEnabled && (
+                  !lastSentAt
+                  || Number.isNaN(lastSentAt.getTime())
+                  || (runStartedAt.getTime() - lastSentAt.getTime()) >= intervalMs
+                );
+
+                autoModeChatEligibility.set(watcher.chat_id, shouldSend);
+              }
+
+              if (!shouldSend) {
+                continue;
+              }
+            }
+
             await this.bot.sendMessage(watcher.chat_id, message, {
               parse_mode: 'HTML',
               disable_web_page_preview: true,
             });
             sentCount += 1;
+            if (chatId === undefined) {
+              chatsWithDeliveredStatus.add(watcher.chat_id);
+            }
           } catch (error) {
             logger.error(`Failed to send hourly status to chat ${watcher.chat_id}:`, error);
             if (this.isKickedChatError(error) && !this.disabledChats.has(watcher.chat_id)) {
@@ -1188,6 +1232,13 @@ export class MonitoringService {
       }
 
       if (sentCount > 0) {
+        if (chatId === undefined && chatsWithDeliveredStatus.size > 0) {
+          await Promise.all(
+            Array.from(chatsWithDeliveredStatus).map((sentChatId) =>
+              this.db.markStatusUpdateSent(sentChatId, runStartedAt)
+            )
+          );
+        }
         logger.info(`Hourly status updates sent to ${sentCount} chat/token watcher(s)`);
       }
       return sentCount;
