@@ -226,10 +226,7 @@ Add me to a group to monitor tokens for everyone!
           break;
         case 'cfg:close':
           try {
-            await this.bot.editMessageText('✅ Settings menu closed.', {
-              chat_id: chatId,
-              message_id: message.message_id,
-            });
+            await this.bot.deleteMessage(chatId, message.message_id);
           } catch {
             await this.sendConfirmationMessage(chatId, '✅ Settings menu closed.');
           }
