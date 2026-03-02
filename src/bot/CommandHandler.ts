@@ -5,7 +5,7 @@ import { MonitoringService } from '../blockchain/MonitoringService';
 import { TokenMetadataService } from '../blockchain/TokenMetadataService';
 import { logger } from '../utils/logger';
 import { validateEthereumAddress, validateHttpUrl } from '../utils/helpers';
-import { formatWatchlistMessage, formatTokenInfo } from '../utils/formatter';
+import { formatWatchlistMessage } from '../utils/formatter';
 
 type PendingConfigType =
   | 'website'
@@ -615,6 +615,7 @@ You'll receive alerts for all buy transactions!
 
       const tokenInfo = await this.priceService.getTokenInfo(tokenAddress);
       const price = await this.priceService.getTokenPrice(tokenAddress);
+      const metrics = await this.priceService.getTokenStatusMetrics(tokenAddress);
       const isWatching = await this.db.isWatchingToken(chatId, tokenAddress);
 
       if (!tokenInfo) {
@@ -622,20 +623,73 @@ You'll receive alerts for all buy transactions!
         return;
       }
 
-      const marketCapUsd = tokenInfo.marketCapUsd || (
+      const marketCapUsd = parseFloat(tokenInfo.marketCapUsd || (
         (parseFloat(tokenInfo.totalSupply || '0') || 0) *
         (parseFloat(price?.priceInUsd || '0') || 0)
-      ).toString();
+      ).toString());
 
-      const message = formatTokenInfo({
-        name: tokenInfo.name,
-        symbol: tokenInfo.symbol,
-        address: tokenAddress,
-        priceInEth: price?.priceInEth || '0',
-        priceInUsd: price?.priceInUsd || '0',
-        marketCapUsd,
-        watching: isWatching,
-      });
+      const tokenPricePax = parseFloat(price?.priceInEth || '0');
+      const tokenPriceUsd = parseFloat(price?.priceInUsd || '0');
+      const totalSupply = parseFloat(tokenInfo.totalSupply || '0');
+
+      const formatUsdCompact = (value: number | null): string => {
+        if (!Number.isFinite(value ?? NaN) || (value ?? 0) < 0) {
+          return 'N/A';
+        }
+
+        return new Intl.NumberFormat('en-US', {
+          style: 'currency',
+          currency: 'USD',
+          notation: 'compact',
+          maximumFractionDigits: 2,
+        }).format(value as number);
+      };
+
+      const formatNumberCompact = (value: number): string => {
+        if (!Number.isFinite(value) || value < 0) {
+          return 'N/A';
+        }
+
+        return new Intl.NumberFormat('en-US', {
+          notation: 'compact',
+          maximumFractionDigits: 2,
+        }).format(value);
+      };
+
+      const ratioText = metrics.buyers24h !== null && metrics.sellers24h !== null
+        ? (() => {
+            const buyers = Math.max(0, metrics.buyers24h);
+            const sellers = Math.max(0, metrics.sellers24h);
+            const total = buyers + sellers;
+            if (total <= 0) {
+              return '0.0% buyers / 0.0% sellers';
+            }
+            const buyersPct = ((buyers / total) * 100).toFixed(1);
+            const sellersPct = ((sellers / total) * 100).toFixed(1);
+            return `${buyersPct}% buyers / ${sellersPct}% sellers`;
+          })()
+        : 'N/A';
+
+      const message = `
+🪙 **Token Info**
+
+**${tokenInfo.name}** (${tokenInfo.symbol})
+\`${tokenAddress}\`
+
+**Watch Status:** ${isWatching ? '👁️ Watching' : '➕ Not watching'}
+
+**Pricing**
+• ${Number.isFinite(tokenPricePax) ? tokenPricePax.toFixed(8) : '0.00000000'} PAX
+• ${Number.isFinite(tokenPriceUsd) ? `$${tokenPriceUsd.toFixed(6)}` : '$0.000000'} USDC
+• Market Cap: ${formatUsdCompact(Number.isFinite(marketCapUsd) ? marketCapUsd : null)} USDC
+
+**Token Stats**
+• Total Supply: ${formatNumberCompact(totalSupply)}
+• Holders: ${metrics.holders !== null ? Math.max(0, Math.floor(metrics.holders)).toLocaleString('en-US') : 'N/A'}
+• 24h Volume: ${formatUsdCompact(metrics.volume24hUsd)} USDC
+• Buys/Sells: ${ratioText}
+• Biggest Buy (24h): ${formatUsdCompact(metrics.biggestBuy24hUsd)} USDC
+      `.trim();
 
       await this.bot.sendMessage(chatId, message, {
         parse_mode: 'Markdown',
@@ -675,28 +729,32 @@ You'll receive alerts for all buy transactions!
       const price = await this.priceService.getTokenPrice(tokenAddress);
 
       if (price && tokenInfo) {
+        const pricePax = parseFloat(price.priceInEth);
+        const priceUsd = parseFloat(price.priceInUsd);
+
         const marketCapUsd = tokenInfo.marketCapUsd
           ? parseFloat(tokenInfo.marketCapUsd)
-          : (parseFloat(tokenInfo.totalSupply || '0') || 0) *
-            (parseFloat(price.priceInUsd || '0') || 0);
-        const marketCapCompact = new Intl.NumberFormat('en-US', {
-          style: 'currency',
-          currency: 'USD',
-          notation: 'compact',
-          maximumFractionDigits: 2,
-        }).format(marketCapUsd);
+          : (parseFloat(tokenInfo.totalSupply || '0') || 0) * priceUsd;
+        const marketCapText = Number.isFinite(marketCapUsd)
+          ? new Intl.NumberFormat('en-US', {
+              style: 'currency',
+              currency: 'USD',
+              notation: 'compact',
+              maximumFractionDigits: 2,
+            }).format(marketCapUsd)
+          : 'N/A';
 
         const priceMessage = `
-📊 **Token Price**
+💵 **Price Snapshot**
 
 **${tokenInfo.name}** (${tokenInfo.symbol})
 \`${tokenAddress}\`
 
 **Current Price:**
-• ${parseFloat(price.priceInEth).toFixed(8)} PAX
-• $${parseFloat(price.priceInUsd).toFixed(6)} USDC
+• ${Number.isFinite(pricePax) ? pricePax.toFixed(8) : '0.00000000'} PAX
+• ${Number.isFinite(priceUsd) ? `$${priceUsd.toFixed(6)}` : '$0.000000'} USDC
 
-**Market Cap:** ${marketCapCompact} USDC
+**Market Cap:** ${marketCapText} USDC
 
 Updated: ${new Date().toLocaleString()}
         `;
