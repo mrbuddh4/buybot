@@ -765,11 +765,19 @@ export class MonitoringService {
       const isSell = tokenOut.toLowerCase() === this.hlpmmUsidAddress;
       if (!isBuy && !isSell) return;
 
-      const tokenAddress = (isBuy ? tokenOut : tokenIn).toLowerCase();
+      const eventTokenAddress = (isBuy ? tokenOut : tokenIn).toLowerCase();
+      let monitoredTokenAddress = eventTokenAddress;
 
-      if (!this.monitoredTokens.has(tokenAddress)) {
+      if (!this.monitoredTokens.has(monitoredTokenAddress)) {
         const resolved = await this.resolveHLPMMPoolToken(pool);
         if (!resolved || !this.monitoredTokens.has(resolved)) return;
+        monitoredTokenAddress = resolved;
+
+        if (resolved !== eventTokenAddress) {
+          logger.info(
+            `HLPMM token resolved from event token ${eventTokenAddress} to monitored token ${resolved} for pool ${pool}`
+          );
+        }
       }
 
       const alreadyDetected = await this.db.hasDetectedTransaction(txHash);
@@ -780,7 +788,7 @@ export class MonitoringService {
 
       const buyer = tx.from;
 
-      const tokenInfo = await this.priceService.getTokenInfo(tokenAddress);
+      const tokenInfo = await this.priceService.getTokenInfo(monitoredTokenAddress);
       const tokenDecimals = tokenInfo?.decimals ?? 18;
       const tokenAmountRaw = isBuy ? amountOut : amountIn;
       const usidAmountRaw = isBuy ? amountIn : amountOut;
@@ -794,7 +802,7 @@ export class MonitoringService {
         ? usidAmountNumeric / tokenAmountNumeric
         : 0;
 
-      const price = await this.priceService.getTokenPrice(tokenAddress);
+      const price = await this.priceService.getTokenPrice(monitoredTokenAddress);
       const effectivePriceInUsd = priceInUsdNumeric > 0
         ? String(priceInUsdNumeric)
         : (price?.priceInUsd || '0');
@@ -802,13 +810,13 @@ export class MonitoringService {
 
       const totalUsdValue = usidAmountNumeric;
 
-      const hlpmmMarketCap = await this.priceService.getHLPMMMarketCap(tokenAddress);
+      const hlpmmMarketCap = await this.priceService.getHLPMMMarketCap(monitoredTokenAddress);
       const marketCapUsd = tokenInfo?.marketCapUsd
         || hlpmmMarketCap
         || ((parseFloat(tokenInfo?.totalSupply || '0') || 0) * parseFloat(effectivePriceInUsd)).toString();
 
       const balanceContract = new ethers.Contract(
-        tokenAddress,
+        monitoredTokenAddress,
         ['function balanceOf(address) view returns (uint256)'],
         this.provider
       );
@@ -831,7 +839,7 @@ export class MonitoringService {
 
       if (isBuy) {
         logger.info(
-          `Computed position (HLPMM): token=${tokenInfo?.symbol || tokenAddress} trader=${buyer} position=${positionLabel} tx=${txHash}`
+          `Computed position (HLPMM): token=${tokenInfo?.symbol || monitoredTokenAddress} trader=${buyer} position=${positionLabel} tx=${txHash}`
         );
       }
 
@@ -851,7 +859,7 @@ export class MonitoringService {
 
       if (isSell) {
         await this.db.saveDetectedTransaction(
-          tokenAddress,
+          monitoredTokenAddress,
           txHash,
           'sell',
           buyer,
@@ -859,14 +867,14 @@ export class MonitoringService {
           usidAmount,
           totalUsdValue
         );
-        await this.db.setTraderPosition(tokenAddress, buyer, currentHoldingsToken);
-        logger.info(`Tracked SELL (HLPMM) for status metrics: ${tokenInfo?.symbol || tokenAddress} - ${txHash}`);
+        await this.db.setTraderPosition(monitoredTokenAddress, buyer, currentHoldingsToken);
+        logger.info(`Tracked SELL (HLPMM) for status metrics: ${tokenInfo?.symbol || monitoredTokenAddress} - ${txHash}`);
         return;
       }
 
-      const watchers = await this.db.getTokenWatchers(tokenAddress);
+      const watchers = await this.db.getTokenWatchers(monitoredTokenAddress);
       if (watchers.length === 0) {
-        logger.info(`No watchers for HLPMM token ${tokenInfo?.symbol || tokenAddress}; skipping alert for tx ${txHash}`);
+        logger.info(`No watchers for HLPMM token ${tokenInfo?.symbol || monitoredTokenAddress}; skipping alert for tx ${txHash}`);
         return;
       }
 
@@ -885,7 +893,7 @@ export class MonitoringService {
 
         const message = formatTransactionAlert({
           type: 'buy',
-          tokenAddress,
+          tokenAddress: monitoredTokenAddress,
           tokenSymbol: tokenInfo?.symbol || 'UNKNOWN',
           tokenName: tokenInfo?.name || 'Unknown Token',
           amount: tokenAmount,
@@ -978,7 +986,7 @@ export class MonitoringService {
 
       if (deliveredCount > 0) {
         await this.db.saveDetectedTransaction(
-          tokenAddress,
+          monitoredTokenAddress,
           txHash,
           'buy',
           buyer,
@@ -986,13 +994,13 @@ export class MonitoringService {
           usidAmount,
           totalUsdValue
         );
-        await this.db.setTraderPosition(tokenAddress, buyer, currentHoldingsToken);
+        await this.db.setTraderPosition(monitoredTokenAddress, buyer, currentHoldingsToken);
         logger.info(`Delivered HLPMM alert for tx ${txHash} to ${deliveredCount} watcher(s)`);
       } else {
         logger.warn(`No HLPMM alert delivery succeeded for tx ${txHash}; transaction not marked as detected.`);
       }
 
-      logger.info(`Detected BUY (HLPMM): ${tokenInfo?.symbol || tokenAddress} - ${txHash}`);
+      logger.info(`Detected BUY (HLPMM): ${tokenInfo?.symbol || monitoredTokenAddress} - ${txHash}`);
     } catch (error) {
       logger.error('Error handling HLPMM swap event:', error);
     }
