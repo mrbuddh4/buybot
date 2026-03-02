@@ -179,7 +179,7 @@ Add me to a group to monitor tokens for everyone!
           const settings = await this.db.getChatSettings(chatId);
           const nextEnabled = !settings.status_updates_enabled;
           await this.db.setStatusUpdatesEnabled(chatId, nextEnabled);
-          await this.bot.sendMessage(chatId, `✅ Automatic status updates ${nextEnabled ? 'enabled' : 'disabled'}.`);
+          await this.sendConfirmationMessage(chatId, `✅ Automatic status updates ${nextEnabled ? 'enabled' : 'disabled'}.`);
           await this.showSettingsMenu(chatId, message.message_id);
           break;
         }
@@ -201,7 +201,7 @@ Add me to a group to monitor tokens for everyone!
           break;
         case 'cfg:clearmedia':
           await this.db.clearAlertMedia(chatId);
-          await this.bot.sendMessage(chatId, '✅ Alert media cleared.');
+          await this.sendConfirmationMessage(chatId, '✅ Alert media cleared.');
           await this.showSettingsMenu(chatId, message.message_id);
           break;
         case 'cfg:web':
@@ -218,11 +218,21 @@ Add me to a group to monitor tokens for everyone!
           break;
         case 'cfg:clear':
           await this.db.clearAlertLinks(chatId);
-          await this.bot.sendMessage(chatId, '✅ Custom alert links cleared.');
+          await this.sendConfirmationMessage(chatId, '✅ Custom alert links cleared.');
           await this.showSettingsMenu(chatId, message.message_id);
           break;
         case 'cfg:refresh':
           await this.showSettingsMenu(chatId, message.message_id);
+          break;
+        case 'cfg:close':
+          try {
+            await this.bot.editMessageText('✅ Settings menu closed.', {
+              chat_id: chatId,
+              message_id: message.message_id,
+            });
+          } catch {
+            await this.sendConfirmationMessage(chatId, '✅ Settings menu closed.');
+          }
           break;
       }
     } catch (error) {
@@ -259,7 +269,7 @@ Add me to a group to monitor tokens for everyone!
           const fileId = msg.photo[msg.photo.length - 1].file_id;
           await this.db.setAlertMedia(chatId, 'photo', fileId);
           this.pendingConfigInputs.delete(key);
-          await this.bot.sendMessage(chatId, '✅ Alert image saved.');
+          await this.sendConfirmationMessage(chatId, '✅ Alert image saved.');
           await this.showSettingsMenu(chatId);
           return;
         }
@@ -267,7 +277,7 @@ Add me to a group to monitor tokens for everyone!
         if (msg.animation) {
           await this.db.setAlertMedia(chatId, 'animation', msg.animation.file_id);
           this.pendingConfigInputs.delete(key);
-          await this.bot.sendMessage(chatId, '✅ Alert GIF saved.');
+          await this.sendConfirmationMessage(chatId, '✅ Alert GIF saved.');
           await this.showSettingsMenu(chatId);
           return;
         }
@@ -289,7 +299,7 @@ Add me to a group to monitor tokens for everyone!
           await this.db.setWatchedTokenMedia(chatId, tokenAddress, 'photo', fileId);
           this.pendingConfigInputs.delete(key);
           this.pendingTokenMediaAddress.delete(key);
-          await this.bot.sendMessage(chatId, `✅ Token media saved for ${tokenAddress}.`);
+          await this.sendConfirmationMessage(chatId, `✅ Token media saved for ${tokenAddress}.`);
           await this.showSettingsMenu(chatId);
           return;
         }
@@ -298,7 +308,7 @@ Add me to a group to monitor tokens for everyone!
           await this.db.setWatchedTokenMedia(chatId, tokenAddress, 'animation', msg.animation.file_id);
           this.pendingConfigInputs.delete(key);
           this.pendingTokenMediaAddress.delete(key);
-          await this.bot.sendMessage(chatId, `✅ Token media saved for ${tokenAddress}.`);
+          await this.sendConfirmationMessage(chatId, `✅ Token media saved for ${tokenAddress}.`);
           await this.showSettingsMenu(chatId);
           return;
         }
@@ -348,7 +358,7 @@ Add me to a group to monitor tokens for everyone!
 
         await this.db.clearWatchedTokenMedia(chatId, tokenAddress);
         this.pendingConfigInputs.delete(key);
-        await this.bot.sendMessage(chatId, `✅ Cleared token media for ${tokenAddress}.`);
+        await this.sendConfirmationMessage(chatId, `✅ Cleared token media for ${tokenAddress}.`);
         await this.showSettingsMenu(chatId);
         return;
       }
@@ -362,7 +372,7 @@ Add me to a group to monitor tokens for everyone!
 
         await this.db.setMinBuyUsdc(chatId, minBuy);
         this.pendingConfigInputs.delete(key);
-        await this.bot.sendMessage(chatId, `✅ Min buy set to $${minBuy.toFixed(2)} USDC.`);
+        await this.sendConfirmationMessage(chatId, `✅ Min buy set to $${minBuy.toFixed(2)} USDC.`);
         await this.showSettingsMenu(chatId);
         return;
       }
@@ -376,7 +386,7 @@ Add me to a group to monitor tokens for everyone!
 
         await this.db.setIconMultiplier(chatId, iconMult);
         this.pendingConfigInputs.delete(key);
-        await this.bot.sendMessage(chatId, `✅ Icon multiplier set to x${iconMult}.`);
+        await this.sendConfirmationMessage(chatId, `✅ Icon multiplier set to x${iconMult}.`);
         await this.showSettingsMenu(chatId);
         return;
       }
@@ -395,7 +405,7 @@ Add me to a group to monitor tokens for everyone!
 
         await this.db.setBuyIconPattern(chatId, normalized);
         this.pendingConfigInputs.delete(key);
-        await this.bot.sendMessage(chatId, `✅ Buy icons set to: ${normalized}`);
+        await this.sendConfirmationMessage(chatId, `✅ Buy icons set to: ${normalized}`);
         await this.showSettingsMenu(chatId);
         return;
       }
@@ -428,7 +438,7 @@ Add me to a group to monitor tokens for everyone!
 
         await this.trySetHLPMMTokenImage(chatId, tokenAddress);
 
-        await this.bot.sendMessage(chatId, `✅ Added ${tokenInfo.symbol} to watchlist.`);
+        await this.sendConfirmationMessage(chatId, `✅ Added ${tokenInfo.symbol} to watchlist.`);
         await this.showSettingsMenu(chatId);
         return;
       }
@@ -442,7 +452,7 @@ Add me to a group to monitor tokens for everyone!
 
         await this.db.setStatusIntervalMinutes(chatId, intervalHours * 60);
         this.pendingConfigInputs.delete(key);
-        await this.bot.sendMessage(chatId, `✅ Status update interval set to ${intervalHours} hour(s).`);
+        await this.sendConfirmationMessage(chatId, `✅ Status update interval set to ${intervalHours} hour(s).`);
         await this.showSettingsMenu(chatId);
         return;
       }
@@ -455,7 +465,7 @@ Add me to a group to monitor tokens for everyone!
       await this.db.setAlertLink(chatId, pending as 'website' | 'telegram' | 'x', text);
       this.pendingConfigInputs.delete(key);
       this.pendingTokenMediaAddress.delete(key);
-      await this.bot.sendMessage(chatId, `✅ ${pending.toUpperCase()} link saved.`);
+      await this.sendConfirmationMessage(chatId, `✅ ${pending.toUpperCase()} link saved.`);
       await this.showSettingsMenu(chatId);
     } catch (error) {
       logger.error('Error handling pending settings input:', error);
@@ -547,7 +557,7 @@ You'll receive alerts for all buy transactions!
         await this.monitoringService.stopMonitoringToken(tokenAddress);
       }
 
-      await this.bot.sendMessage(chatId, '✅ Token removed from watchlist.');
+      await this.sendConfirmationMessage(chatId, '✅ Token removed from watchlist.');
     } catch (error) {
       logger.error('Error handling /unwatch command:', error);
       await this.bot.sendMessage(chatId, '❌ Failed to remove token from watchlist.');
@@ -722,7 +732,7 @@ Updated: ${new Date().toLocaleString()}
       }
 
       await this.db.clearAlertLinks(chatId);
-      await this.bot.sendMessage(chatId, '✅ Custom alert links cleared.');
+      await this.sendConfirmationMessage(chatId, '✅ Custom alert links cleared.');
     } catch (error) {
       logger.error('Error handling /clearlinks command:', error);
       await this.bot.sendMessage(chatId, '❌ Failed to clear links.');
@@ -773,7 +783,7 @@ Updated: ${new Date().toLocaleString()}
 
     const enabled = raw === 'on';
     await this.db.setStatusUpdatesEnabled(chatId, enabled);
-    await this.bot.sendMessage(chatId, `✅ Automatic status updates ${enabled ? 'enabled' : 'disabled'}.`);
+    await this.sendConfirmationMessage(chatId, `✅ Automatic status updates ${enabled ? 'enabled' : 'disabled'}.`);
   }
 
   async handleStatusInterval(msg: TelegramBot.Message, match: RegExpExecArray | null): Promise<void> {
@@ -803,7 +813,7 @@ Updated: ${new Date().toLocaleString()}
     }
 
     await this.db.setStatusIntervalMinutes(chatId, intervalHours * 60);
-    await this.bot.sendMessage(chatId, `✅ Status update interval set to ${intervalHours} hour(s).`);
+    await this.sendConfirmationMessage(chatId, `✅ Status update interval set to ${intervalHours} hour(s).`);
   }
 
   private async setLink(
@@ -838,7 +848,7 @@ Updated: ${new Date().toLocaleString()}
       }
 
       await this.db.setAlertLink(chatId, platform, url);
-      await this.bot.sendMessage(chatId, `✅ ${platform.toUpperCase()} link saved.`);
+      await this.sendConfirmationMessage(chatId, `✅ ${platform.toUpperCase()} link saved.`);
     } catch (error) {
       logger.error(`Error handling /set${platform} command:`, error);
       await this.bot.sendMessage(chatId, `❌ Failed to save ${platform} link.`);
@@ -847,6 +857,28 @@ Updated: ${new Date().toLocaleString()}
 
   private pendingKey(chatId: number, userId: number): string {
     return `${chatId}:${userId}`;
+  }
+
+  private getConfirmationAutoDeleteMs(): number {
+    const configuredSeconds = parseInt(process.env.CONFIRMATION_AUTO_DELETE_SECONDS || '20', 10);
+    if (!Number.isFinite(configuredSeconds) || configuredSeconds <= 0) {
+      return 20_000;
+    }
+
+    return Math.min(300, configuredSeconds) * 1000;
+  }
+
+  private async sendConfirmationMessage(
+    chatId: number,
+    text: string,
+    options?: TelegramBot.SendMessageOptions
+  ): Promise<void> {
+    const sentMessage = await this.bot.sendMessage(chatId, text, options);
+    const deleteAfterMs = this.getConfirmationAutoDeleteMs();
+
+    setTimeout(() => {
+      void this.bot.deleteMessage(chatId, sentMessage.message_id).catch(() => undefined);
+    }, deleteAfterMs);
   }
 
   private async canManageConfig(chat: TelegramBot.Chat, userId: number): Promise<boolean> {
@@ -945,6 +977,7 @@ Updated: ${new Date().toLocaleString()}
         ],
         [
           { text: 'Refresh', callback_data: 'cfg:refresh' },
+          { text: 'Close', callback_data: 'cfg:close' },
         ],
       ],
     };
