@@ -827,7 +827,7 @@ export class MonitoringService {
 
       const positionLabel = isBuy
         ? await this.computePositionLabel(
-            tokenAddress,
+            monitoredTokenAddress,
             buyer,
             txHash,
             blockNumber,
