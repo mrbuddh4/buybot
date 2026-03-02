@@ -45,6 +45,8 @@ async function main() {
     const database = Database.getInstance();
     logger.info('Connecting to database...', { context: 'startup.database' });
     await database.initialize();
+    logger.info('Acquiring singleton process lock...', { context: 'startup.database' });
+    await database.acquireSingletonProcessLock(process.env.INSTANCE_LOCK_NAME || 'buybot-main');
     logger.info('Running migrations...', { context: 'startup.database' });
     await database.runMigrations();
     logger.info('Database initialized', { context: 'startup.database' });
