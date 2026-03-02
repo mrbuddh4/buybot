@@ -1027,11 +1027,15 @@ export class MonitoringService {
   }
 
   private getHourlyStatusIntervalMs(): number {
-    const schedulerTickMinutes = parseInt(process.env.STATUS_SCHEDULER_TICK_MINUTES || '5', 10);
+    const schedulerTickMinutes = parseInt(process.env.STATUS_SCHEDULER_TICK_MINUTES || '1', 10);
     const safeTickMinutes = Number.isFinite(schedulerTickMinutes)
       ? Math.max(1, Math.min(60, schedulerTickMinutes))
-      : 5;
+      : 1;
     return safeTickMinutes * 60 * 1000;
+  }
+
+  private isStatusAlignToClockEnabled(): boolean {
+    return (process.env.HOURLY_STATUS_ALIGN_TO_CLOCK || 'true').toLowerCase() !== 'false';
   }
 
   private getDefaultStatusIntervalMinutes(): number {
@@ -1066,7 +1070,7 @@ export class MonitoringService {
 
     const intervalMs = this.getHourlyStatusIntervalMs();
     const defaultStatusIntervalMinutes = this.getDefaultStatusIntervalMinutes();
-    const alignToClock = (process.env.HOURLY_STATUS_ALIGN_TO_CLOCK || 'true').toLowerCase() !== 'false';
+    const alignToClock = this.isStatusAlignToClockEnabled();
 
     if (!alignToClock) {
       this.statusUpdateInterval = setInterval(() => {
@@ -1109,6 +1113,7 @@ export class MonitoringService {
     try {
       const runStartedAt = new Date();
       const defaultStatusIntervalMinutes = this.getDefaultStatusIntervalMinutes();
+      const alignToClock = this.isStatusAlignToClockEnabled();
       const autoModeChatEligibility = new Map<number, boolean>();
       const chatsWithDeliveredStatus = new Set<number>();
 
@@ -1195,11 +1200,23 @@ export class MonitoringService {
                   : null;
 
                 const intervalMs = intervalMinutes * 60 * 1000;
-                shouldSend = statusEnabled && (
-                  !lastSentAt
-                  || Number.isNaN(lastSentAt.getTime())
-                  || (runStartedAt.getTime() - lastSentAt.getTime()) >= intervalMs
-                );
+                if (alignToClock) {
+                  const currentWindowStart = Math.floor(runStartedAt.getTime() / intervalMs) * intervalMs;
+                  const lastSentWindowStart = lastSentAt && !Number.isNaN(lastSentAt.getTime())
+                    ? Math.floor(lastSentAt.getTime() / intervalMs) * intervalMs
+                    : null;
+
+                  shouldSend = statusEnabled && (
+                    lastSentWindowStart === null
+                    || lastSentWindowStart < currentWindowStart
+                  );
+                } else {
+                  shouldSend = statusEnabled && (
+                    !lastSentAt
+                    || Number.isNaN(lastSentAt.getTime())
+                    || (runStartedAt.getTime() - lastSentAt.getTime()) >= intervalMs
+                  );
+                }
 
                 autoModeChatEligibility.set(watcher.chat_id, shouldSend);
               }
