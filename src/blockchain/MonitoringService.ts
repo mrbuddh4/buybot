@@ -1,4 +1,5 @@
 import { ethers } from 'ethers';
+import axios from 'axios';
 import TelegramBot from 'node-telegram-bot-api';
 import { logger } from '../utils/logger';
 import { Database } from '../database/Database';
@@ -350,6 +351,48 @@ export class MonitoringService {
     return message.includes('bot was kicked') || message.includes('forbidden: bot was kicked');
   }
 
+  private isHttpMediaReference(mediaRef: string): boolean {
+    return /^https?:\/\//i.test(mediaRef);
+  }
+
+  private async sendPhotoFromUrlFallback(
+    chatId: number,
+    mediaUrl: string,
+    options: TelegramBot.SendPhotoOptions
+  ): Promise<boolean> {
+    try {
+      const response = await axios.get(mediaUrl, {
+        responseType: 'arraybuffer',
+        timeout: 12_000,
+      });
+
+      await this.bot.sendPhoto(chatId, Buffer.from(response.data), options);
+      return true;
+    } catch (error) {
+      logger.warn(`Failed to send photo via URL fallback for chat ${chatId}.`, error);
+      return false;
+    }
+  }
+
+  private async sendAnimationFromUrlFallback(
+    chatId: number,
+    mediaUrl: string,
+    options: TelegramBot.SendAnimationOptions
+  ): Promise<boolean> {
+    try {
+      const response = await axios.get(mediaUrl, {
+        responseType: 'arraybuffer',
+        timeout: 12_000,
+      });
+
+      await this.bot.sendAnimation(chatId, Buffer.from(response.data), options);
+      return true;
+    } catch (error) {
+      logger.warn(`Failed to send animation via URL fallback for chat ${chatId}.`, error);
+      return false;
+    }
+  }
+
   private async resolveAmmPurchaseDetails(
     tx: ethers.TransactionResponse,
     boughtTokenAddress: string,
@@ -672,6 +715,19 @@ export class MonitoringService {
               deliveredCount += 1;
             } catch (mediaError) {
               logger.warn(`Photo alert failed for chat ${watcher.chat_id}, falling back to text alert.`, mediaError);
+
+              if (this.isHttpMediaReference(effectiveMediaFileId)) {
+                const recovered = await this.sendPhotoFromUrlFallback(watcher.chat_id, effectiveMediaFileId, {
+                  caption: message,
+                  parse_mode: 'HTML',
+                  reply_markup: sendOptions.reply_markup,
+                });
+
+                if (recovered) {
+                  sent = true;
+                  deliveredCount += 1;
+                }
+              }
             }
           } else if (effectiveMediaFileId && effectiveMediaType === 'animation') {
             try {
@@ -684,6 +740,19 @@ export class MonitoringService {
               deliveredCount += 1;
             } catch (mediaError) {
               logger.warn(`GIF alert failed for chat ${watcher.chat_id}, falling back to text alert.`, mediaError);
+
+              if (this.isHttpMediaReference(effectiveMediaFileId)) {
+                const recovered = await this.sendAnimationFromUrlFallback(watcher.chat_id, effectiveMediaFileId, {
+                  caption: message,
+                  parse_mode: 'HTML',
+                  reply_markup: sendOptions.reply_markup,
+                });
+
+                if (recovered) {
+                  sent = true;
+                  deliveredCount += 1;
+                }
+              }
             }
           }
 
@@ -952,6 +1021,19 @@ export class MonitoringService {
               deliveredCount += 1;
             } catch (mediaError) {
               logger.warn(`HLPMM photo alert failed for chat ${watcher.chat_id}, falling back to text alert.`, mediaError);
+
+              if (this.isHttpMediaReference(effectiveMediaFileId)) {
+                const recovered = await this.sendPhotoFromUrlFallback(watcher.chat_id, effectiveMediaFileId, {
+                  caption: message,
+                  parse_mode: 'HTML',
+                  reply_markup: sendOptions.reply_markup,
+                });
+
+                if (recovered) {
+                  sent = true;
+                  deliveredCount += 1;
+                }
+              }
             }
           } else if (effectiveMediaFileId && effectiveMediaType === 'animation') {
             try {
@@ -964,6 +1046,19 @@ export class MonitoringService {
               deliveredCount += 1;
             } catch (mediaError) {
               logger.warn(`HLPMM GIF alert failed for chat ${watcher.chat_id}, falling back to text alert.`, mediaError);
+
+              if (this.isHttpMediaReference(effectiveMediaFileId)) {
+                const recovered = await this.sendAnimationFromUrlFallback(watcher.chat_id, effectiveMediaFileId, {
+                  caption: message,
+                  parse_mode: 'HTML',
+                  reply_markup: sendOptions.reply_markup,
+                });
+
+                if (recovered) {
+                  sent = true;
+                  deliveredCount += 1;
+                }
+              }
             }
           }
 

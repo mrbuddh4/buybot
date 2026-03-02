@@ -28,6 +28,7 @@ export class S3Service {
       Key: key,
       Body: buffer,
       ContentType: contentType,
+      ACL: 'public-read',
     });
 
     await this.client.send(command);
