@@ -595,6 +595,7 @@ You'll receive alerts for all buy transactions!
 
   async handleInfo(msg: TelegramBot.Message, match: RegExpExecArray | null): Promise<void> {
     const chatId = msg.chat.id;
+    let loadingMessageId: number | null = null;
 
     if (!match) {
       await this.sendNoticeMessage(chatId, '❌ Usage: /info <token_address>');
@@ -609,7 +610,8 @@ You'll receive alerts for all buy transactions!
     }
 
     try {
-      await this.bot.sendMessage(chatId, '⏳ Fetching token information...');
+      const loadingMessage = await this.bot.sendMessage(chatId, '⏳ Fetching token information...');
+      loadingMessageId = loadingMessage.message_id;
 
       const tokenInfo = await this.priceService.getTokenInfo(tokenAddress);
       const price = await this.priceService.getTokenPrice(tokenAddress);
@@ -642,11 +644,16 @@ You'll receive alerts for all buy transactions!
     } catch (error) {
       logger.error('Error handling /info command:', error);
       await this.sendNoticeMessage(chatId, '❌ Failed to fetch token information.');
+    } finally {
+      if (loadingMessageId !== null) {
+        void this.bot.deleteMessage(chatId, loadingMessageId).catch(() => undefined);
+      }
     }
   }
 
   async handlePrice(msg: TelegramBot.Message, match: RegExpExecArray | null): Promise<void> {
     const chatId = msg.chat.id;
+    let loadingMessageId: number | null = null;
 
     if (!match) {
       await this.sendNoticeMessage(chatId, '❌ Usage: /price <token_address>');
@@ -661,7 +668,8 @@ You'll receive alerts for all buy transactions!
     }
 
     try {
-      await this.bot.sendMessage(chatId, '⏳ Fetching price...');
+      const loadingMessage = await this.bot.sendMessage(chatId, '⏳ Fetching price...');
+      loadingMessageId = loadingMessage.message_id;
 
       const tokenInfo = await this.priceService.getTokenInfo(tokenAddress);
       const price = await this.priceService.getTokenPrice(tokenAddress);
@@ -703,6 +711,10 @@ Updated: ${new Date().toLocaleString()}
     } catch (error) {
       logger.error('Error handling /price command:', error);
       await this.sendNoticeMessage(chatId, '❌ Failed to fetch token price.');
+    } finally {
+      if (loadingMessageId !== null) {
+        void this.bot.deleteMessage(chatId, loadingMessageId).catch(() => undefined);
+      }
     }
   }
 
