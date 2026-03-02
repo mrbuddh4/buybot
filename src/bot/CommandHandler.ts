@@ -73,7 +73,7 @@ Add me to a group to monitor tokens for everyone!
       await this.bot.sendMessage(chatId, welcomeMessage, { parse_mode: 'Markdown' });
     } catch (error) {
       logger.error('Error handling /start command:', error);
-      await this.bot.sendMessage(chatId, '❌ An error occurred. Please try again.');
+      await this.sendNoticeMessage(chatId, '❌ An error occurred. Please try again.');
     }
   }
 
@@ -134,7 +134,7 @@ Add me to a group to monitor tokens for everyone!
       await this.showSettingsMenu(chatId);
     } catch (error) {
       logger.error('Error handling /settings command:', error);
-      await this.bot.sendMessage(chatId, '❌ Failed to open settings menu.');
+      await this.sendNoticeMessage(chatId, '❌ Failed to open settings menu.');
     }
   }
 
@@ -237,7 +237,7 @@ Add me to a group to monitor tokens for everyone!
       }
     } catch (error) {
       logger.error('Error handling settings callback:', error);
-      await this.bot.sendMessage(chatId, '❌ Failed to update settings.');
+      await this.sendNoticeMessage(chatId, '❌ Failed to update settings.');
     }
   }
 
@@ -260,7 +260,7 @@ Add me to a group to monitor tokens for everyone!
       const canManage = await this.canManageConfig(msg.chat, userId);
       if (!canManage) {
         this.pendingConfigInputs.delete(key);
-        await this.bot.sendMessage(chatId, '❌ Only group admins can change settings.');
+        await this.sendNoticeMessage(chatId, '❌ Only group admins can change settings.');
         return;
       }
 
@@ -282,7 +282,7 @@ Add me to a group to monitor tokens for everyone!
           return;
         }
 
-        await this.bot.sendMessage(chatId, '❌ Send a photo or GIF animation.');
+        await this.sendNoticeMessage(chatId, '❌ Send a photo or GIF animation.');
         return;
       }
 
@@ -290,7 +290,7 @@ Add me to a group to monitor tokens for everyone!
         const tokenAddress = this.pendingTokenMediaAddress.get(key);
         if (!tokenAddress) {
           this.pendingConfigInputs.delete(key);
-          await this.bot.sendMessage(chatId, '❌ Token media setup expired. Please try again.');
+          await this.sendNoticeMessage(chatId, '❌ Token media setup expired. Please try again.');
           return;
         }
 
@@ -313,7 +313,7 @@ Add me to a group to monitor tokens for everyone!
           return;
         }
 
-        await this.bot.sendMessage(chatId, '❌ Send a photo or GIF animation.');
+        await this.sendNoticeMessage(chatId, '❌ Send a photo or GIF animation.');
         return;
       }
 
@@ -326,13 +326,13 @@ Add me to a group to monitor tokens for everyone!
         const tokenAddress = text.toLowerCase();
 
         if (!validateEthereumAddress(tokenAddress)) {
-          await this.bot.sendMessage(chatId, '❌ Invalid token address.');
+          await this.sendNoticeMessage(chatId, '❌ Invalid token address.');
           return;
         }
 
         const isWatching = await this.db.isWatchingToken(chatId, tokenAddress);
         if (!isWatching) {
-          await this.bot.sendMessage(chatId, '❌ This token is not in your watchlist.');
+          await this.sendNoticeMessage(chatId, '❌ This token is not in your watchlist.');
           return;
         }
 
@@ -346,13 +346,13 @@ Add me to a group to monitor tokens for everyone!
         const tokenAddress = text.toLowerCase();
 
         if (!validateEthereumAddress(tokenAddress)) {
-          await this.bot.sendMessage(chatId, '❌ Invalid token address.');
+          await this.sendNoticeMessage(chatId, '❌ Invalid token address.');
           return;
         }
 
         const isWatching = await this.db.isWatchingToken(chatId, tokenAddress);
         if (!isWatching) {
-          await this.bot.sendMessage(chatId, '❌ This token is not in your watchlist.');
+          await this.sendNoticeMessage(chatId, '❌ This token is not in your watchlist.');
           return;
         }
 
@@ -366,7 +366,7 @@ Add me to a group to monitor tokens for everyone!
       if (pending === 'minbuy') {
         const minBuy = parseFloat(text);
         if (!Number.isFinite(minBuy) || minBuy < 0) {
-          await this.bot.sendMessage(chatId, '❌ Invalid value. Send a number >= 0.');
+          await this.sendNoticeMessage(chatId, '❌ Invalid value. Send a number >= 0.');
           return;
         }
 
@@ -380,7 +380,7 @@ Add me to a group to monitor tokens for everyone!
       if (pending === 'iconmult') {
         const iconMult = parseInt(text, 10);
         if (!Number.isFinite(iconMult) || iconMult < 1 || iconMult > 5) {
-          await this.bot.sendMessage(chatId, '❌ Invalid value. Send an integer from 1 to 5.');
+          await this.sendNoticeMessage(chatId, '❌ Invalid value. Send an integer from 1 to 5.');
           return;
         }
 
@@ -394,12 +394,12 @@ Add me to a group to monitor tokens for everyone!
       if (pending === 'buyicons') {
         const normalized = text.toLowerCase() === 'default' ? '🟢⚔️' : text;
         if (!normalized.trim()) {
-          await this.bot.sendMessage(chatId, '❌ Invalid value. Send at least one emoji or symbol.');
+          await this.sendNoticeMessage(chatId, '❌ Invalid value. Send at least one emoji or symbol.');
           return;
         }
 
         if (normalized.length > 24) {
-          await this.bot.sendMessage(chatId, '❌ Keep it short (max 24 characters).');
+          await this.sendNoticeMessage(chatId, '❌ Keep it short (max 24 characters).');
           return;
         }
 
@@ -414,21 +414,21 @@ Add me to a group to monitor tokens for everyone!
         const tokenAddress = text;
 
         if (!validateEthereumAddress(tokenAddress)) {
-          await this.bot.sendMessage(chatId, '❌ Invalid token address.');
+          await this.sendNoticeMessage(chatId, '❌ Invalid token address.');
           return;
         }
 
         const isWatching = await this.db.isWatchingToken(chatId, tokenAddress);
         if (isWatching) {
           this.pendingConfigInputs.delete(key);
-          await this.bot.sendMessage(chatId, '⚠️ Already monitoring this token.');
+          await this.sendNoticeMessage(chatId, '⚠️ Already monitoring this token.');
           await this.showSettingsMenu(chatId);
           return;
         }
 
         const tokenInfo = await this.priceService.getTokenInfo(tokenAddress);
         if (!tokenInfo) {
-          await this.bot.sendMessage(chatId, '❌ Could not fetch token information. Invalid address?');
+          await this.sendNoticeMessage(chatId, '❌ Could not fetch token information. Invalid address?');
           return;
         }
 
@@ -446,7 +446,7 @@ Add me to a group to monitor tokens for everyone!
       if (pending === 'statusinterval') {
         const intervalHours = parseInt(text, 10);
         if (!Number.isFinite(intervalHours) || intervalHours < 1 || intervalHours > 24) {
-          await this.bot.sendMessage(chatId, '❌ Invalid value. Send an integer from 1 to 24 hours.');
+          await this.sendNoticeMessage(chatId, '❌ Invalid value. Send an integer from 1 to 24 hours.');
           return;
         }
 
@@ -458,7 +458,7 @@ Add me to a group to monitor tokens for everyone!
       }
 
       if (!validateHttpUrl(text)) {
-        await this.bot.sendMessage(chatId, '❌ Invalid URL. Use http:// or https://');
+        await this.sendNoticeMessage(chatId, '❌ Invalid URL. Use http:// or https://');
         return;
       }
 
@@ -469,7 +469,7 @@ Add me to a group to monitor tokens for everyone!
       await this.showSettingsMenu(chatId);
     } catch (error) {
       logger.error('Error handling pending settings input:', error);
-      await this.bot.sendMessage(chatId, '❌ Failed to save setting.');
+      await this.sendNoticeMessage(chatId, '❌ Failed to save setting.');
     }
   }
 
@@ -478,21 +478,21 @@ Add me to a group to monitor tokens for everyone!
     const userId = msg.from?.id;
 
     if (!userId || !match) {
-      await this.bot.sendMessage(chatId, '❌ Usage: /watch <token_address>');
+      await this.sendNoticeMessage(chatId, '❌ Usage: /watch <token_address>');
       return;
     }
 
     const tokenAddress = match[1].trim();
 
     if (!validateEthereumAddress(tokenAddress)) {
-      await this.bot.sendMessage(chatId, '❌ Invalid token address.');
+      await this.sendNoticeMessage(chatId, '❌ Invalid token address.');
       return;
     }
 
     try {
       const isWatching = await this.db.isWatchingToken(chatId, tokenAddress);
       if (isWatching) {
-        await this.bot.sendMessage(chatId, '⚠️ Already monitoring this token.');
+        await this.sendNoticeMessage(chatId, '⚠️ Already monitoring this token.');
         return;
       }
 
@@ -500,7 +500,7 @@ Add me to a group to monitor tokens for everyone!
 
       const tokenInfo = await this.priceService.getTokenInfo(tokenAddress);
       if (!tokenInfo) {
-        await this.bot.sendMessage(chatId, '❌ Could not fetch token information. Invalid address?');
+        await this.sendNoticeMessage(chatId, '❌ Could not fetch token information. Invalid address?');
         return;
       }
 
@@ -522,7 +522,7 @@ You'll receive alerts for all buy transactions!
       await this.bot.sendMessage(chatId, successMessage, { parse_mode: 'Markdown' });
     } catch (error) {
       logger.error('Error handling /watch command:', error);
-      await this.bot.sendMessage(chatId, '❌ Failed to add token to watchlist.');
+      await this.sendNoticeMessage(chatId, '❌ Failed to add token to watchlist.');
     }
   }
 
@@ -531,14 +531,14 @@ You'll receive alerts for all buy transactions!
     const userId = msg.from?.id;
 
     if (!userId || !match) {
-      await this.bot.sendMessage(chatId, '❌ Usage: /unwatch <token_address>');
+      await this.sendNoticeMessage(chatId, '❌ Usage: /unwatch <token_address>');
       return;
     }
 
     const tokenAddress = match[1].trim();
 
     if (!validateEthereumAddress(tokenAddress)) {
-      await this.bot.sendMessage(chatId, '❌ Invalid token address.');
+      await this.sendNoticeMessage(chatId, '❌ Invalid token address.');
       return;
     }
 
@@ -546,7 +546,7 @@ You'll receive alerts for all buy transactions!
       const isWatching = await this.db.isWatchingToken(chatId, tokenAddress);
 
       if (!isWatching) {
-        await this.bot.sendMessage(chatId, '⚠️ Not monitoring this token.');
+        await this.sendNoticeMessage(chatId, '⚠️ Not monitoring this token.');
         return;
       }
 
@@ -560,7 +560,7 @@ You'll receive alerts for all buy transactions!
       await this.sendConfirmationMessage(chatId, '✅ Token removed from watchlist.');
     } catch (error) {
       logger.error('Error handling /unwatch command:', error);
-      await this.bot.sendMessage(chatId, '❌ Failed to remove token from watchlist.');
+      await this.sendNoticeMessage(chatId, '❌ Failed to remove token from watchlist.');
     }
   }
 
@@ -573,7 +573,7 @@ You'll receive alerts for all buy transactions!
       await this.bot.sendMessage(chatId, message);
     } catch (error) {
       logger.error('Error handling /watchlist command:', error);
-      await this.bot.sendMessage(chatId, '❌ Failed to fetch watchlist.');
+      await this.sendNoticeMessage(chatId, '❌ Failed to fetch watchlist.');
     }
   }
 
@@ -581,14 +581,14 @@ You'll receive alerts for all buy transactions!
     const chatId = msg.chat.id;
 
     if (!match) {
-      await this.bot.sendMessage(chatId, '❌ Usage: /info <token_address>');
+      await this.sendNoticeMessage(chatId, '❌ Usage: /info <token_address>');
       return;
     }
 
     const tokenAddress = match[1].trim();
 
     if (!validateEthereumAddress(tokenAddress)) {
-      await this.bot.sendMessage(chatId, '❌ Invalid token address.');
+      await this.sendNoticeMessage(chatId, '❌ Invalid token address.');
       return;
     }
 
@@ -600,7 +600,7 @@ You'll receive alerts for all buy transactions!
       const isWatching = await this.db.isWatchingToken(chatId, tokenAddress);
 
       if (!tokenInfo) {
-        await this.bot.sendMessage(chatId, '❌ Could not fetch token information.');
+        await this.sendNoticeMessage(chatId, '❌ Could not fetch token information.');
         return;
       }
 
@@ -622,7 +622,7 @@ You'll receive alerts for all buy transactions!
       await this.bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
     } catch (error) {
       logger.error('Error handling /info command:', error);
-      await this.bot.sendMessage(chatId, '❌ Failed to fetch token information.');
+      await this.sendNoticeMessage(chatId, '❌ Failed to fetch token information.');
     }
   }
 
@@ -630,14 +630,14 @@ You'll receive alerts for all buy transactions!
     const chatId = msg.chat.id;
 
     if (!match) {
-      await this.bot.sendMessage(chatId, '❌ Usage: /price <token_address>');
+      await this.sendNoticeMessage(chatId, '❌ Usage: /price <token_address>');
       return;
     }
 
     const tokenAddress = match[1].trim();
 
     if (!validateEthereumAddress(tokenAddress)) {
-      await this.bot.sendMessage(chatId, '❌ Invalid token address.');
+      await this.sendNoticeMessage(chatId, '❌ Invalid token address.');
       return;
     }
 
@@ -676,11 +676,11 @@ Updated: ${new Date().toLocaleString()}
 
         await this.bot.sendMessage(chatId, priceMessage, { parse_mode: 'Markdown' });
       } else {
-        await this.bot.sendMessage(chatId, '❌ Could not fetch price for this token.');
+        await this.sendNoticeMessage(chatId, '❌ Could not fetch price for this token.');
       }
     } catch (error) {
       logger.error('Error handling /price command:', error);
-      await this.bot.sendMessage(chatId, '❌ Failed to fetch token price.');
+      await this.sendNoticeMessage(chatId, '❌ Failed to fetch token price.');
     }
   }
 
@@ -711,7 +711,7 @@ Updated: ${new Date().toLocaleString()}
       );
     } catch (error) {
       logger.error('Error handling /buylinks command:', error);
-      await this.bot.sendMessage(chatId, '❌ Failed to fetch links.');
+      await this.sendNoticeMessage(chatId, '❌ Failed to fetch links.');
     }
   }
 
@@ -720,14 +720,14 @@ Updated: ${new Date().toLocaleString()}
     const userId = msg.from?.id;
 
     if (!userId) {
-      await this.bot.sendMessage(chatId, '❌ Could not identify user.');
+      await this.sendNoticeMessage(chatId, '❌ Could not identify user.');
       return;
     }
 
     try {
       const canManage = await this.canManageConfig(msg.chat, userId);
       if (!canManage) {
-        await this.bot.sendMessage(chatId, '❌ Only group admins can clear links.');
+        await this.sendNoticeMessage(chatId, '❌ Only group admins can clear links.');
         return;
       }
 
@@ -735,7 +735,7 @@ Updated: ${new Date().toLocaleString()}
       await this.sendConfirmationMessage(chatId, '✅ Custom alert links cleared.');
     } catch (error) {
       logger.error('Error handling /clearlinks command:', error);
-      await this.bot.sendMessage(chatId, '❌ Failed to clear links.');
+      await this.sendNoticeMessage(chatId, '❌ Failed to clear links.');
     }
   }
 
@@ -746,12 +746,12 @@ Updated: ${new Date().toLocaleString()}
       const sentCount = await this.monitoringService.triggerHourlyStatusUpdates(chatId);
 
       if (sentCount === 0) {
-        await this.bot.sendMessage(chatId, 'ℹ️ No watched tokens found for this chat yet. Use /watch <token_address> first.');
+        await this.sendNoticeMessage(chatId, 'ℹ️ No watched tokens found for this chat yet. Use /watch <token_address> first.');
         return;
       }
     } catch (error) {
       logger.error('Error handling /statusnow command:', error);
-      await this.bot.sendMessage(chatId, '❌ Failed to send status update right now.');
+      await this.sendNoticeMessage(chatId, '❌ Failed to send status update right now.');
     }
   }
 
@@ -760,24 +760,24 @@ Updated: ${new Date().toLocaleString()}
     const userId = msg.from?.id;
 
     if (!userId) {
-      await this.bot.sendMessage(chatId, '❌ Could not identify user.');
+      await this.sendNoticeMessage(chatId, '❌ Could not identify user.');
       return;
     }
 
     if (!match) {
-      await this.bot.sendMessage(chatId, '❌ Usage: /statusupdates <on|off>');
+      await this.sendNoticeMessage(chatId, '❌ Usage: /statusupdates <on|off>');
       return;
     }
 
     const canManage = await this.canManageConfig(msg.chat, userId);
     if (!canManage) {
-      await this.bot.sendMessage(chatId, '❌ Only group admins can change status update settings.');
+      await this.sendNoticeMessage(chatId, '❌ Only group admins can change status update settings.');
       return;
     }
 
     const raw = match[1].trim().toLowerCase();
     if (raw !== 'on' && raw !== 'off') {
-      await this.bot.sendMessage(chatId, '❌ Usage: /statusupdates <on|off>');
+      await this.sendNoticeMessage(chatId, '❌ Usage: /statusupdates <on|off>');
       return;
     }
 
@@ -791,24 +791,24 @@ Updated: ${new Date().toLocaleString()}
     const userId = msg.from?.id;
 
     if (!userId) {
-      await this.bot.sendMessage(chatId, '❌ Could not identify user.');
+      await this.sendNoticeMessage(chatId, '❌ Could not identify user.');
       return;
     }
 
     if (!match) {
-      await this.bot.sendMessage(chatId, '❌ Usage: /statusinterval <hours>');
+      await this.sendNoticeMessage(chatId, '❌ Usage: /statusinterval <hours>');
       return;
     }
 
     const canManage = await this.canManageConfig(msg.chat, userId);
     if (!canManage) {
-      await this.bot.sendMessage(chatId, '❌ Only group admins can change status update settings.');
+      await this.sendNoticeMessage(chatId, '❌ Only group admins can change status update settings.');
       return;
     }
 
     const intervalHours = parseInt(match[1].trim(), 10);
     if (!Number.isFinite(intervalHours) || intervalHours < 1 || intervalHours > 24) {
-      await this.bot.sendMessage(chatId, '❌ Invalid value. Send an integer from 1 to 24 hours.');
+      await this.sendNoticeMessage(chatId, '❌ Invalid value. Send an integer from 1 to 24 hours.');
       return;
     }
 
@@ -825,25 +825,25 @@ Updated: ${new Date().toLocaleString()}
     const userId = msg.from?.id;
 
     if (!userId) {
-      await this.bot.sendMessage(chatId, '❌ Could not identify user.');
+      await this.sendNoticeMessage(chatId, '❌ Could not identify user.');
       return;
     }
 
     if (!match) {
-      await this.bot.sendMessage(chatId, `❌ Usage: /set${platform} <url>`);
+      await this.sendNoticeMessage(chatId, `❌ Usage: /set${platform} <url>`);
       return;
     }
 
     const url = match[1].trim();
     if (!validateHttpUrl(url)) {
-      await this.bot.sendMessage(chatId, '❌ Invalid URL. Use http:// or https://');
+      await this.sendNoticeMessage(chatId, '❌ Invalid URL. Use http:// or https://');
       return;
     }
 
     try {
       const canManage = await this.canManageConfig(msg.chat, userId);
       if (!canManage) {
-        await this.bot.sendMessage(chatId, `❌ Only group admins can set ${platform} links.`);
+        await this.sendNoticeMessage(chatId, `❌ Only group admins can set ${platform} links.`);
         return;
       }
 
@@ -851,7 +851,7 @@ Updated: ${new Date().toLocaleString()}
       await this.sendConfirmationMessage(chatId, `✅ ${platform.toUpperCase()} link saved.`);
     } catch (error) {
       logger.error(`Error handling /set${platform} command:`, error);
-      await this.bot.sendMessage(chatId, `❌ Failed to save ${platform} link.`);
+      await this.sendNoticeMessage(chatId, `❌ Failed to save ${platform} link.`);
     }
   }
 
@@ -873,8 +873,35 @@ Updated: ${new Date().toLocaleString()}
     text: string,
     options?: TelegramBot.SendMessageOptions
   ): Promise<void> {
-    const sentMessage = await this.bot.sendMessage(chatId, text, options);
     const deleteAfterMs = this.getConfirmationAutoDeleteMs();
+    await this.sendEphemeralMessage(chatId, text, deleteAfterMs, options);
+  }
+
+  private getNoticeAutoDeleteMs(): number {
+    const configuredSeconds = parseInt(process.env.NOTICE_AUTO_DELETE_SECONDS || '', 10);
+    if (Number.isFinite(configuredSeconds) && configuredSeconds > 0) {
+      return Math.min(300, configuredSeconds) * 1000;
+    }
+
+    return this.getConfirmationAutoDeleteMs();
+  }
+
+  private async sendNoticeMessage(
+    chatId: number,
+    text: string,
+    options?: TelegramBot.SendMessageOptions
+  ): Promise<void> {
+    const deleteAfterMs = this.getNoticeAutoDeleteMs();
+    await this.sendEphemeralMessage(chatId, text, deleteAfterMs, options);
+  }
+
+  private async sendEphemeralMessage(
+    chatId: number,
+    text: string,
+    deleteAfterMs: number,
+    options?: TelegramBot.SendMessageOptions
+  ): Promise<void> {
+    const sentMessage = await this.bot.sendMessage(chatId, text, options);
 
     setTimeout(() => {
       void this.bot.deleteMessage(chatId, sentMessage.message_id).catch(() => undefined);
