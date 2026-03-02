@@ -106,6 +106,8 @@ Add me to a group to monitor tokens for everyone!
 3. View transaction details, amounts, and prices
 4. Works in groups and private chats!
 
+**Tip:** Use /price for a quick snapshot, and /info for full token details + 24h metrics.
+
 **Example:**
 \`/watch 0x1234...abcd\`
     `;
