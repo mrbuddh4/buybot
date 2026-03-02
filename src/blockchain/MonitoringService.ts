@@ -531,8 +531,17 @@ export class MonitoringService {
       const marketCapUsd = tokenInfo?.marketCapUsd
         || ((parseFloat(tokenInfo?.totalSupply || '0') || 0) * priceInUsdNumeric).toString();
 
-      const alreadyDetected = await this.db.hasDetectedTransaction(swapEvent.txHash);
-      if (alreadyDetected) {
+      const insertedTransaction = await this.db.saveDetectedTransaction(
+        tokenAddress,
+        swapEvent.txHash,
+        type,
+        trader,
+        value.toString(),
+        type === 'buy' ? estimatedEthValue : '0',
+        totalUsdValue
+      );
+
+      if (!insertedTransaction) {
         return;
       }
 
@@ -575,15 +584,6 @@ export class MonitoringService {
         : 'N/A';
 
       if (type === 'sell') {
-        await this.db.saveDetectedTransaction(
-          tokenAddress,
-          swapEvent.txHash,
-          'sell',
-          trader,
-          value.toString(),
-          '0',
-          totalUsdValue
-        );
         await this.db.setTraderPosition(tokenAddress, trader, currentHoldingsToken);
         logger.info(`Tracked SELL (AMM) for status metrics: ${tokenInfo?.symbol || tokenAddress} - ${swapEvent.txHash}`);
         return;
@@ -705,15 +705,6 @@ export class MonitoringService {
       }
 
       if (deliveredCount > 0) {
-        await this.db.saveDetectedTransaction(
-          tokenAddress,
-          swapEvent.txHash,
-          type,
-          trader,
-          value.toString(),
-          estimatedEthValue,
-          totalUsdValue
-        );
         await this.db.setTraderPosition(tokenAddress, trader, currentHoldingsToken);
         logger.info(`Delivered alert for tx ${swapEvent.txHash} to ${deliveredCount} watcher(s)`);
       } else {
@@ -772,9 +763,6 @@ export class MonitoringService {
         if (!resolved || !this.monitoredTokens.has(resolved)) return;
       }
 
-      const alreadyDetected = await this.db.hasDetectedTransaction(txHash);
-      if (alreadyDetected) return;
-
       const tx = await this.provider.getTransaction(txHash);
       if (!tx) return;
 
@@ -801,6 +789,18 @@ export class MonitoringService {
       const effectivePriceInEth = price?.priceInEth || '0';
 
       const totalUsdValue = usidAmountNumeric;
+
+      const insertedTransaction = await this.db.saveDetectedTransaction(
+        tokenAddress,
+        txHash,
+        isSell ? 'sell' : 'buy',
+        tx.from,
+        tokenAmountRaw.toString(),
+        usidAmount,
+        totalUsdValue
+      );
+
+      if (!insertedTransaction) return;
 
       const hlpmmMarketCap = await this.priceService.getHLPMMMarketCap(tokenAddress);
       const marketCapUsd = tokenInfo?.marketCapUsd
@@ -850,15 +850,6 @@ export class MonitoringService {
         : 'N/A';
 
       if (isSell) {
-        await this.db.saveDetectedTransaction(
-          tokenAddress,
-          txHash,
-          'sell',
-          buyer,
-          tokenAmountRaw.toString(),
-          usidAmount,
-          totalUsdValue
-        );
         await this.db.setTraderPosition(tokenAddress, buyer, currentHoldingsToken);
         logger.info(`Tracked SELL (HLPMM) for status metrics: ${tokenInfo?.symbol || tokenAddress} - ${txHash}`);
         return;
@@ -977,15 +968,6 @@ export class MonitoringService {
       }
 
       if (deliveredCount > 0) {
-        await this.db.saveDetectedTransaction(
-          tokenAddress,
-          txHash,
-          'buy',
-          buyer,
-          amountOut.toString(),
-          usidAmount,
-          totalUsdValue
-        );
         await this.db.setTraderPosition(tokenAddress, buyer, currentHoldingsToken);
         logger.info(`Delivered HLPMM alert for tx ${txHash} to ${deliveredCount} watcher(s)`);
       } else {
@@ -1097,6 +1079,10 @@ export class MonitoringService {
 
     this.statusUpdateInProgress = true;
     try {
+      const intervalMs = this.getHourlyStatusIntervalMs();
+      const bucketStart = new Date(Math.floor(Date.now() / intervalMs) * intervalMs);
+      const isAutomaticRun = chatId === undefined;
+
       const watchedTokens = chatId !== undefined
         ? (await this.db.getWatchedTokens(chatId)).map((token) => ({
             token_address: token.address,
@@ -1168,6 +1154,13 @@ export class MonitoringService {
 
         for (const watcher of watchers) {
           try {
+            if (isAutomaticRun) {
+              const claimed = await this.db.claimHourlyStatusDelivery(tokenAddress, watcher.chat_id, bucketStart);
+              if (!claimed) {
+                continue;
+              }
+            }
+
             await this.bot.sendMessage(watcher.chat_id, message, {
               parse_mode: 'HTML',
               disable_web_page_preview: true,
