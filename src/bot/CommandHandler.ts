@@ -110,7 +110,10 @@ Add me to a group to monitor tokens for everyone!
 \`/watch 0x1234...abcd\`
     `;
 
-    await this.bot.sendMessage(chatId, helpMessage, { parse_mode: 'Markdown' });
+    await this.bot.sendMessage(chatId, helpMessage, {
+      parse_mode: 'Markdown',
+      reply_markup: this.buildCloseReplyMarkup(),
+    });
   }
 
   async handleGroupAdded(msg: TelegramBot.Message): Promise<void> {
@@ -142,7 +145,21 @@ Add me to a group to monitor tokens for everyone!
     const data = query.data;
     const message = query.message;
 
-    if (!data || !data.startsWith('cfg:') || !message) {
+    if (!data || !message) {
+      return;
+    }
+
+    if (data === 'msg:close') {
+      await this.bot.answerCallbackQuery(query.id);
+      try {
+        await this.bot.deleteMessage(message.chat.id, message.message_id);
+      } catch {
+        // Ignore close failures when message is already deleted or not removable.
+      }
+      return;
+    }
+
+    if (!data.startsWith('cfg:')) {
       return;
     }
 
@@ -567,7 +584,9 @@ You'll receive alerts for all buy transactions!
     try {
       const tokens = await this.db.getWatchedTokens(chatId);
       const message = formatWatchlistMessage(tokens);
-      await this.bot.sendMessage(chatId, message);
+      await this.bot.sendMessage(chatId, message, {
+        reply_markup: this.buildCloseReplyMarkup(),
+      });
     } catch (error) {
       logger.error('Error handling /watchlist command:', error);
       await this.sendNoticeMessage(chatId, '❌ Failed to fetch watchlist.');
@@ -616,7 +635,10 @@ You'll receive alerts for all buy transactions!
         watching: isWatching,
       });
 
-      await this.bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+      await this.bot.sendMessage(chatId, message, {
+        parse_mode: 'Markdown',
+        reply_markup: this.buildCloseReplyMarkup(),
+      });
     } catch (error) {
       logger.error('Error handling /info command:', error);
       await this.sendNoticeMessage(chatId, '❌ Failed to fetch token information.');
@@ -671,7 +693,10 @@ You'll receive alerts for all buy transactions!
 Updated: ${new Date().toLocaleString()}
         `;
 
-        await this.bot.sendMessage(chatId, priceMessage, { parse_mode: 'Markdown' });
+        await this.bot.sendMessage(chatId, priceMessage, {
+          parse_mode: 'Markdown',
+          reply_markup: this.buildCloseReplyMarkup(),
+        });
       } else {
         await this.sendNoticeMessage(chatId, '❌ Could not fetch price for this token.');
       }
@@ -854,6 +879,12 @@ Updated: ${new Date().toLocaleString()}
 
   private pendingKey(chatId: number, userId: number): string {
     return `${chatId}:${userId}`;
+  }
+
+  private buildCloseReplyMarkup(): TelegramBot.InlineKeyboardMarkup {
+    return {
+      inline_keyboard: [[{ text: 'Close', callback_data: 'msg:close' }]],
+    };
   }
 
   private getConfirmationAutoDeleteMs(): number {
