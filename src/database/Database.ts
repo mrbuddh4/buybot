@@ -1,4 +1,4 @@
-import { Pool, PoolClient } from 'pg';
+import { Pool } from 'pg';
 import { logger } from '../utils/logger';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -71,8 +71,6 @@ export interface TraderPositionSnapshot {
 export class Database {
   private static instance: Database;
   private pool!: Pool;
-  private singletonLockClient: PoolClient | null = null;
-  private singletonLockName: string | null = null;
 
   private constructor() {}
 
@@ -246,17 +244,6 @@ export class Database {
         )
       `);
 
-      await this.pool.query(`
-        CREATE TABLE IF NOT EXISTS hourly_status_deliveries (
-          id SERIAL PRIMARY KEY,
-          bucket_start TIMESTAMPTZ NOT NULL,
-          token_address TEXT NOT NULL,
-          chat_id BIGINT NOT NULL,
-          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-          UNIQUE(bucket_start, token_address, chat_id)
-        )
-      `);
-
       await this.addColumnIfMissing('chat_settings', 'alert_media_type', 'TEXT');
       await this.addColumnIfMissing('chat_settings', 'alert_media_file_id', 'TEXT');
       await this.addColumnIfMissing('chat_settings', 'buy_icon_pattern', "TEXT DEFAULT '🟢⚔️'");
@@ -270,7 +257,6 @@ export class Database {
       await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_chat_alert_links ON chat_alert_links(chat_id)`);
       await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_chat_settings ON chat_settings(chat_id)`);
       await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_trader_positions ON trader_positions(token_address, trader_address)`);
-      await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_hourly_status_deliveries_bucket ON hourly_status_deliveries(bucket_start)`);
 
       logger.info('Database tables created');
     } catch (error) {
@@ -585,63 +571,6 @@ export class Database {
     }
   }
 
-  async claimHourlyStatusDelivery(tokenAddress: string, chatId: number, bucketStart: Date): Promise<boolean> {
-    try {
-      const { rowCount } = await this.pool.query(
-        `INSERT INTO hourly_status_deliveries (bucket_start, token_address, chat_id)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (bucket_start, token_address, chat_id) DO NOTHING`,
-        [bucketStart.toISOString(), tokenAddress.toLowerCase(), chatId]
-      );
-
-      return (rowCount ?? 0) > 0;
-    } catch (error) {
-      logger.error('Error claiming hourly status delivery:', error);
-      return false;
-    }
-  }
-
-  async acquireSingletonProcessLock(lockName: string = 'buybot-main'): Promise<void> {
-    const normalizedLockName = lockName.trim() || 'buybot-main';
-
-    if (this.singletonLockClient) {
-      return;
-    }
-
-    try {
-      const client = await this.pool.connect();
-      await client.query('SELECT pg_advisory_lock(hashtext($1))', [normalizedLockName]);
-
-      this.singletonLockClient = client;
-      this.singletonLockName = normalizedLockName;
-      logger.info(`Acquired singleton process lock: ${normalizedLockName}`);
-    } catch (error) {
-      logger.error('Error acquiring singleton process lock:', error);
-      throw error;
-    }
-  }
-
-  async releaseSingletonProcessLock(): Promise<void> {
-    if (!this.singletonLockClient || !this.singletonLockName) {
-      return;
-    }
-
-    const client = this.singletonLockClient;
-    const lockName = this.singletonLockName;
-
-    this.singletonLockClient = null;
-    this.singletonLockName = null;
-
-    try {
-      await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockName]);
-      logger.info(`Released singleton process lock: ${lockName}`);
-    } catch (error) {
-      logger.error('Error releasing singleton process lock:', error);
-    } finally {
-      client.release();
-    }
-  }
-
   async getAlertLinks(chatId: number): Promise<AlertLinks> {
     try {
       const { rows } = await this.pool.query(
@@ -895,7 +824,6 @@ export class Database {
 
   async close(): Promise<void> {
     try {
-      await this.releaseSingletonProcessLock();
       await this.pool.end();
       logger.info('PostgreSQL connection closed');
     } catch (error) {
