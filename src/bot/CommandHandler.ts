@@ -63,7 +63,7 @@ I'll notify you whenever tokens you're watching are bought or sold on the blockc
 /clearlinks - Remove custom alert links
 /statusnow - Send token status update now
 /statusupdates <on|off> - Toggle automatic status updates
-/statusinterval <minutes> - Set automatic status interval
+/statusinterval <hours> - Set automatic status interval
 /settings - Open group settings panel
 /help - Show all commands
 
@@ -97,7 +97,7 @@ Add me to a group to monitor tokens for everyone!
 /clearlinks - Remove custom alert links
 /statusnow - Send token status update now
 /statusupdates <on|off> - Toggle automatic status updates
-/statusinterval <minutes> - Set automatic status interval
+/statusinterval <hours> - Set automatic status interval
 /settings - Open settings panel
 
 **How it works:**
@@ -185,7 +185,7 @@ Add me to a group to monitor tokens for everyone!
         }
         case 'cfg:status_interval':
           this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'statusinterval');
-          await this.bot.sendMessage(chatId, 'Send status interval in minutes (5-1440).');
+          await this.bot.sendMessage(chatId, 'Send status interval in hours (1-24).');
           break;
         case 'cfg:media':
           this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'media');
@@ -434,15 +434,15 @@ Add me to a group to monitor tokens for everyone!
       }
 
       if (pending === 'statusinterval') {
-        const intervalMinutes = parseInt(text, 10);
-        if (!Number.isFinite(intervalMinutes) || intervalMinutes < 5 || intervalMinutes > 1440) {
-          await this.bot.sendMessage(chatId, '❌ Invalid value. Send an integer from 5 to 1440 minutes.');
+        const intervalHours = parseInt(text, 10);
+        if (!Number.isFinite(intervalHours) || intervalHours < 1 || intervalHours > 24) {
+          await this.bot.sendMessage(chatId, '❌ Invalid value. Send an integer from 1 to 24 hours.');
           return;
         }
 
-        await this.db.setStatusIntervalMinutes(chatId, intervalMinutes);
+        await this.db.setStatusIntervalMinutes(chatId, intervalHours * 60);
         this.pendingConfigInputs.delete(key);
-        await this.bot.sendMessage(chatId, `✅ Status update interval set to ${intervalMinutes} minute(s).`);
+        await this.bot.sendMessage(chatId, `✅ Status update interval set to ${intervalHours} hour(s).`);
         await this.showSettingsMenu(chatId);
         return;
       }
@@ -786,7 +786,7 @@ Updated: ${new Date().toLocaleString()}
     }
 
     if (!match) {
-      await this.bot.sendMessage(chatId, '❌ Usage: /statusinterval <minutes>');
+      await this.bot.sendMessage(chatId, '❌ Usage: /statusinterval <hours>');
       return;
     }
 
@@ -796,14 +796,14 @@ Updated: ${new Date().toLocaleString()}
       return;
     }
 
-    const intervalMinutes = parseInt(match[1].trim(), 10);
-    if (!Number.isFinite(intervalMinutes) || intervalMinutes < 5 || intervalMinutes > 1440) {
-      await this.bot.sendMessage(chatId, '❌ Invalid value. Send an integer from 5 to 1440 minutes.');
+    const intervalHours = parseInt(match[1].trim(), 10);
+    if (!Number.isFinite(intervalHours) || intervalHours < 1 || intervalHours > 24) {
+      await this.bot.sendMessage(chatId, '❌ Invalid value. Send an integer from 1 to 24 hours.');
       return;
     }
 
-    await this.db.setStatusIntervalMinutes(chatId, intervalMinutes);
-    await this.bot.sendMessage(chatId, `✅ Status update interval set to ${intervalMinutes} minute(s).`);
+    await this.db.setStatusIntervalMinutes(chatId, intervalHours * 60);
+    await this.bot.sendMessage(chatId, `✅ Status update interval set to ${intervalHours} hour(s).`);
   }
 
   private async setLink(
@@ -893,7 +893,8 @@ Updated: ${new Date().toLocaleString()}
       ? settings.alert_media_type === 'animation' ? '✅ GIF' : '✅ Image'
       : '❌ None';
     const statusEnabledText = settings.status_updates_enabled ? '✅ On' : '❌ Off';
-    const statusIntervalText = `${settings.status_interval_minutes ?? 60} min`;
+    const statusIntervalHours = Math.max(1, Math.min(24, Math.round((settings.status_interval_minutes ?? 60) / 60)));
+    const statusIntervalText = `${statusIntervalHours} hr`;
 
     const text = [
       '⚙️ Group Buy Bot Settings',
@@ -921,7 +922,7 @@ Updated: ${new Date().toLocaleString()}
         ],
         [
           { text: `Status ${settings.status_updates_enabled ? 'On' : 'Off'}`, callback_data: 'cfg:status_toggle' },
-          { text: `Interval ${settings.status_interval_minutes ?? 60}m`, callback_data: 'cfg:status_interval' },
+          { text: `Interval ${statusIntervalHours}h`, callback_data: 'cfg:status_interval' },
         ],
         [
           { text: 'Add Token', callback_data: 'cfg:addtoken' },

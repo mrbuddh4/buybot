@@ -677,7 +677,7 @@ export class Database {
         buy_icon_pattern: String(row.buy_icon_pattern || '🟢⚔️').trim() || '🟢⚔️',
         status_updates_enabled: row.status_updates_enabled !== false,
         status_interval_minutes: Number.isFinite(Number(row.status_interval_minutes))
-          ? Math.max(5, Math.min(1440, Math.floor(Number(row.status_interval_minutes))))
+          ? Math.max(60, Math.min(1440, Math.round(Number(row.status_interval_minutes) / 60) * 60))
           : null,
         status_last_sent_at: row.status_last_sent_at ? new Date(row.status_last_sent_at).toISOString() : null,
         alert_media_type: row.alert_media_type === 'photo' || row.alert_media_type === 'animation'
@@ -746,7 +746,7 @@ export class Database {
 
   async setStatusIntervalMinutes(chatId: number, intervalMinutes: number): Promise<void> {
     try {
-      const safeInterval = Math.max(5, Math.min(1440, Math.floor(intervalMinutes)));
+      const safeInterval = Math.max(60, Math.min(1440, Math.round(intervalMinutes / 60) * 60));
       await this.pool.query('INSERT INTO chat_settings (chat_id) VALUES ($1) ON CONFLICT (chat_id) DO NOTHING', [chatId]);
       await this.pool.query(
         'UPDATE chat_settings SET status_interval_minutes = $1, updated_at = CURRENT_TIMESTAMP WHERE chat_id = $2',

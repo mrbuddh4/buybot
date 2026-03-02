@@ -167,7 +167,7 @@ export class TelegramBot {
       { command: 'buylinks', description: 'View alert button links' },
       { command: 'statusnow', description: 'Send status updates now' },
       { command: 'statusupdates', description: 'Toggle automatic status updates' },
-      { command: 'statusinterval', description: 'Set automatic status interval (min)' },
+      { command: 'statusinterval', description: 'Set automatic status interval (hours)' },
       { command: 'help', description: 'Show available commands' },
     ];
 
@@ -180,7 +180,7 @@ export class TelegramBot {
       { command: 'settings', description: 'Open group settings' },
       { command: 'statusnow', description: 'Send status updates now' },
       { command: 'statusupdates', description: 'Toggle automatic status updates' },
-      { command: 'statusinterval', description: 'Set automatic status interval (min)' },
+      { command: 'statusinterval', description: 'Set automatic status interval (hours)' },
       { command: 'help', description: 'Show available commands' },
     ];
 
