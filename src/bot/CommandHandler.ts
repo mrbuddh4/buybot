@@ -54,8 +54,8 @@ I'll notify you whenever tokens you're watching are bought or sold on the blockc
 /watch <address> - Start monitoring a token
 /unwatch <address> - Stop monitoring a token
 /watchlist - View your monitored tokens
-/info <address> - Get token information
-/price <address> - Check current token price
+/info <address> - Full token details and 24h metrics
+/price <address> - Quick price snapshot
 /setwebsite <url> - Set alert Website button
 /settelegram <url> - Set alert Telegram button
 /setx <url> - Set alert X button
@@ -88,8 +88,8 @@ Add me to a group to monitor tokens for everyone!
 /watch <token_address> - Start monitoring a token
 /unwatch <token_address> - Stop monitoring a token
 /watchlist - View all monitored tokens
-/info <token_address> - Get token details
-/price <token_address> - Check current price
+/info <token_address> - Full token details and 24h metrics
+/price <token_address> - Quick price snapshot
 /setwebsite <url> - Set alert Website button
 /settelegram <url> - Set alert Telegram button
 /setx <url> - Set alert X button
