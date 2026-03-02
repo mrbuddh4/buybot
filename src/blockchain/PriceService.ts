@@ -1051,20 +1051,81 @@ export class PriceService {
         'function totalSupply() view returns (uint256)',
       ];
 
-      const tokenContract = new ethers.Contract(tokenAddress, tokenABI, this.provider);
+      const tokenBytes32ABI = [
+        'function name() view returns (bytes32)',
+        'function symbol() view returns (bytes32)',
+      ];
 
-      const [name, symbol, decimals, totalSupplyRaw] = await Promise.all([
-        tokenContract.name(),
-        tokenContract.symbol(),
-        tokenContract.decimals(),
-        tokenContract.totalSupply(),
-      ]);
+      const tokenContract = new ethers.Contract(tokenAddress, tokenABI, this.provider);
+      const tokenBytes32Contract = new ethers.Contract(tokenAddress, tokenBytes32ABI, this.provider);
+
+      const contractCode = await this.provider.getCode(tokenAddress);
+      if (!contractCode || contractCode === '0x') {
+        return null;
+      }
+
+      let name = 'Unknown Token';
+      let symbol = 'UNKNOWN';
+      let decimals = 18;
+      let totalSupplyRaw = 0n;
+
+      try {
+        const nameValue = await tokenContract.name();
+        if (nameValue && String(nameValue).trim()) {
+          name = String(nameValue).trim();
+        }
+      } catch {
+        try {
+          const nameBytes: string = await tokenBytes32Contract.name();
+          const decodedName = ethers.decodeBytes32String(nameBytes).trim();
+          if (decodedName) {
+            name = decodedName;
+          }
+        } catch {
+          // Keep fallback name for non-standard contracts.
+        }
+      }
+
+      try {
+        const symbolValue = await tokenContract.symbol();
+        if (symbolValue && String(symbolValue).trim()) {
+          symbol = String(symbolValue).trim();
+        }
+      } catch {
+        try {
+          const symbolBytes: string = await tokenBytes32Contract.symbol();
+          const decodedSymbol = ethers.decodeBytes32String(symbolBytes).trim();
+          if (decodedSymbol) {
+            symbol = decodedSymbol;
+          }
+        } catch {
+          // Keep fallback symbol for non-standard contracts.
+        }
+      }
+
+      try {
+        const decimalsValue = await tokenContract.decimals();
+        const parsedDecimals = Number(decimalsValue);
+        if (Number.isFinite(parsedDecimals) && parsedDecimals >= 0 && parsedDecimals <= 30) {
+          decimals = parsedDecimals;
+        }
+      } catch {
+        // Keep fallback decimals.
+      }
+
+      try {
+        totalSupplyRaw = await tokenContract.totalSupply();
+      } catch {
+        // Keep fallback total supply.
+      }
+
+      const totalSupply = ethers.formatUnits(totalSupplyRaw, decimals);
 
       return {
         name,
         symbol,
-        decimals: Number(decimals),
-        totalSupply: ethers.formatUnits(totalSupplyRaw, Number(decimals)),
+        decimals,
+        totalSupply,
       };
     } catch (error) {
       logger.error('Error getting token info:', error);
