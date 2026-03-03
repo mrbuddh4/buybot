@@ -10,6 +10,7 @@ RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
 COPY tsconfig.json ./
 COPY migrations ./migrations
+COPY assets ./assets
 COPY src ./src
 RUN npm run build
 RUN npm prune --omit=dev
@@ -22,6 +23,7 @@ COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/migrations ./migrations
+COPY --from=builder /app/assets ./assets
 
 RUN mkdir -p /app/data /app/logs
 

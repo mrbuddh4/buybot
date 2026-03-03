@@ -1407,20 +1407,19 @@ Updated: ${new Date().toLocaleString()}
       try {
         if (settingsMenuImagePath) {
           await editAsCaption();
+          return;
         } else {
           await editAsText();
-        }
-        return;
-      } catch {
-        try {
-          if (settingsMenuImagePath) {
-            await editAsText();
-          } else {
-            await editAsCaption();
-          }
           return;
-        } catch {
-          // Fall back to sending a new message
+        }
+      } catch {
+        if (!settingsMenuImagePath) {
+          try {
+            await editAsCaption();
+            return;
+          } catch {
+            // Fall back to sending a new message
+          }
         }
       }
     }
