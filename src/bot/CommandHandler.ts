@@ -1814,6 +1814,10 @@ Updated: ${new Date().toLocaleString()}
       inline_keyboard: [
         utilityRow,
         ...tokenRows,
+        [
+          { text: 'Add Token', callback_data: 'cfg:addtoken' },
+          { text: 'Settings', callback_data: 'cfg:settings' },
+        ],
         ...(navigationRow.length > 0 ? [navigationRow] : []),
         [
           { text: 'Back', callback_data: 'cfg:settings' },
