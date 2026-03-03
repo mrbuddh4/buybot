@@ -7,6 +7,7 @@ export class TelegramBot {
   private commandHandler: CommandHandler;
   private pollingEnabled: boolean;
   private pollingStoppedDueToConflict: boolean = false;
+  private pollingRecoveryTimeout: NodeJS.Timeout | null = null;
   private botUserId: number | null = null;
 
   constructor() {
@@ -36,6 +37,7 @@ export class TelegramBot {
             logger.error('Failed to stop polling after conflict:', stopError);
           });
           logger.warn('Telegram polling disabled due to 409 conflict; monitoring and alerts remain active for existing watchlist entries.');
+          this.schedulePollingRecovery();
         }
       });
 
@@ -48,6 +50,25 @@ export class TelegramBot {
       logger.error('Error starting Telegram bot:', error);
       throw error;
     }
+  }
+
+  private schedulePollingRecovery(): void {
+    if (!this.pollingEnabled || this.pollingRecoveryTimeout) {
+      return;
+    }
+
+    this.pollingRecoveryTimeout = setTimeout(async () => {
+      this.pollingRecoveryTimeout = null;
+
+      try {
+        await this.bot.startPolling();
+        this.pollingStoppedDueToConflict = false;
+        logger.info('Telegram polling resumed after conflict recovery attempt.');
+      } catch (error) {
+        logger.warn('Telegram polling recovery attempt failed; will retry.', error);
+        this.schedulePollingRecovery();
+      }
+    }, 30000);
   }
 
   private setupCommands(): void {
@@ -202,6 +223,11 @@ export class TelegramBot {
   }
 
   async stop(): Promise<void> {
+    if (this.pollingRecoveryTimeout) {
+      clearTimeout(this.pollingRecoveryTimeout);
+      this.pollingRecoveryTimeout = null;
+    }
+
     if (this.pollingEnabled) {
       await this.bot.stopPolling();
     }
