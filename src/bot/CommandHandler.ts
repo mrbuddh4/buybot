@@ -39,6 +39,8 @@ export class CommandHandler {
   private pendingTokenMediaAddress: Map<string, string> = new Map();
   private pendingTokenConfigAddress: Map<string, string> = new Map();
   private tokenSelectionFilterByChat: Map<number, string> = new Map();
+  private activeMenuMessageByChat: Map<number, number> = new Map();
+  private activePromptMessageByPendingKey: Map<string, number> = new Map();
 
   constructor(bot: TelegramBot) {
     this.bot = bot;
@@ -222,8 +224,9 @@ Add me to a group to monitor tokens for everyone!
       }
 
       if (data === 'cfg:token:search') {
-        this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'tokensearch');
-        await this.bot.sendMessage(chatId, 'Send token symbol, name, or contract snippet to filter the token list.');
+        const pendingKey = this.pendingKey(chatId, userId);
+        this.pendingConfigInputs.set(pendingKey, 'tokensearch');
+        await this.sendTrackedPromptMessage(chatId, pendingKey, 'Send token symbol, name, or contract snippet to filter the token list.');
         return;
       }
 
@@ -265,9 +268,10 @@ Add me to a group to monitor tokens for everyone!
           return;
         }
 
-        this.pendingTokenMediaAddress.set(this.pendingKey(chatId, userId), tokenAddress);
-        this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'tokenmedia_media');
-        await this.bot.sendMessage(chatId, `Send a photo or GIF animation for ${tokenAddress}.`);
+        const pendingKey = this.pendingKey(chatId, userId);
+        this.pendingTokenMediaAddress.set(pendingKey, tokenAddress);
+        this.pendingConfigInputs.set(pendingKey, 'tokenmedia_media');
+        await this.sendTrackedPromptMessage(chatId, pendingKey, `Send a photo or GIF animation for ${tokenAddress}.`);
         return;
       }
 
@@ -314,9 +318,10 @@ Add me to a group to monitor tokens for everyone!
           return;
         }
 
-        this.pendingTokenConfigAddress.set(this.pendingKey(chatId, userId), tokenAddress);
-        this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'tokenemoji');
-        await this.bot.sendMessage(chatId, 'Send emoji pattern for this token alerts (example: 🟢⚔️ or 💚). Send "default" to reset.');
+        const pendingKey = this.pendingKey(chatId, userId);
+        this.pendingTokenConfigAddress.set(pendingKey, tokenAddress);
+        this.pendingConfigInputs.set(pendingKey, 'tokenemoji');
+        await this.sendTrackedPromptMessage(chatId, pendingKey, 'Send emoji pattern for this token alerts (example: 🟢⚔️ or 💚). Send "default" to reset.');
         return;
       }
 
@@ -331,9 +336,10 @@ Add me to a group to monitor tokens for everyone!
           return;
         }
 
-        this.pendingTokenConfigAddress.set(this.pendingKey(chatId, userId), tokenAddress);
-        this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'tokenwebsite');
-        await this.bot.sendMessage(chatId, 'Send token-specific Website URL (http/https).');
+        const pendingKey = this.pendingKey(chatId, userId);
+        this.pendingTokenConfigAddress.set(pendingKey, tokenAddress);
+        this.pendingConfigInputs.set(pendingKey, 'tokenwebsite');
+        await this.sendTrackedPromptMessage(chatId, pendingKey, 'Send token-specific Website URL (http/https).');
         return;
       }
 
@@ -348,9 +354,10 @@ Add me to a group to monitor tokens for everyone!
           return;
         }
 
-        this.pendingTokenConfigAddress.set(this.pendingKey(chatId, userId), tokenAddress);
-        this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'tokentelegram');
-        await this.bot.sendMessage(chatId, 'Send token-specific Telegram URL (http/https).');
+        const pendingKey = this.pendingKey(chatId, userId);
+        this.pendingTokenConfigAddress.set(pendingKey, tokenAddress);
+        this.pendingConfigInputs.set(pendingKey, 'tokentelegram');
+        await this.sendTrackedPromptMessage(chatId, pendingKey, 'Send token-specific Telegram URL (http/https).');
         return;
       }
 
@@ -365,9 +372,10 @@ Add me to a group to monitor tokens for everyone!
           return;
         }
 
-        this.pendingTokenConfigAddress.set(this.pendingKey(chatId, userId), tokenAddress);
-        this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'tokenx');
-        await this.bot.sendMessage(chatId, 'Send token-specific X URL (http/https).');
+        const pendingKey = this.pendingKey(chatId, userId);
+        this.pendingTokenConfigAddress.set(pendingKey, tokenAddress);
+        this.pendingConfigInputs.set(pendingKey, 'tokenx');
+        await this.sendTrackedPromptMessage(chatId, pendingKey, 'Send token-specific X URL (http/https).');
         return;
       }
 
@@ -394,20 +402,32 @@ Add me to a group to monitor tokens for everyone!
 
       switch (data) {
         case 'cfg:minbuy':
-          this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'minbuy');
-          await this.bot.sendMessage(chatId, 'Send min buy in USDC (example: 500). Use 0 to disable.');
+          {
+            const pendingKey = this.pendingKey(chatId, userId);
+            this.pendingConfigInputs.set(pendingKey, 'minbuy');
+            await this.sendTrackedPromptMessage(chatId, pendingKey, 'Send min buy in USDC (example: 500). Use 0 to disable.');
+          }
           break;
         case 'cfg:icon':
-          this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'iconmult');
-          await this.bot.sendMessage(chatId, 'Send icon multiplier (1 to 5).');
+          {
+            const pendingKey = this.pendingKey(chatId, userId);
+            this.pendingConfigInputs.set(pendingKey, 'iconmult');
+            await this.sendTrackedPromptMessage(chatId, pendingKey, 'Send icon multiplier (1 to 5).');
+          }
           break;
         case 'cfg:buyicons':
-          this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'buyicons');
-          await this.bot.sendMessage(chatId, 'Send emoji pattern for alerts (example: 🟢⚔️ or 💚). Send "default" to reset.');
+          {
+            const pendingKey = this.pendingKey(chatId, userId);
+            this.pendingConfigInputs.set(pendingKey, 'buyicons');
+            await this.sendTrackedPromptMessage(chatId, pendingKey, 'Send emoji pattern for alerts (example: 🟢⚔️ or 💚). Send "default" to reset.');
+          }
           break;
         case 'cfg:addtoken':
-          this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'addtoken');
-          await this.bot.sendMessage(chatId, 'Send token contract address to add to watchlist.');
+          {
+            const pendingKey = this.pendingKey(chatId, userId);
+            this.pendingConfigInputs.set(pendingKey, 'addtoken');
+            await this.sendTrackedPromptMessage(chatId, pendingKey, 'Send token contract address to add to watchlist.');
+          }
           break;
         case 'cfg:status_toggle': {
           const settings = await this.db.getChatSettings(chatId);
@@ -418,20 +438,32 @@ Add me to a group to monitor tokens for everyone!
           break;
         }
         case 'cfg:status_interval':
-          this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'statusinterval');
-          await this.bot.sendMessage(chatId, 'Send status interval in hours (1-24).');
+          {
+            const pendingKey = this.pendingKey(chatId, userId);
+            this.pendingConfigInputs.set(pendingKey, 'statusinterval');
+            await this.sendTrackedPromptMessage(chatId, pendingKey, 'Send status interval in hours (1-24).');
+          }
           break;
         case 'cfg:media':
-          this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'media');
-          await this.bot.sendMessage(chatId, 'Send a photo or GIF animation to use in alerts.');
+          {
+            const pendingKey = this.pendingKey(chatId, userId);
+            this.pendingConfigInputs.set(pendingKey, 'media');
+            await this.sendTrackedPromptMessage(chatId, pendingKey, 'Send a photo or GIF animation to use in alerts.');
+          }
           break;
         case 'cfg:tokenmedia:set':
-          this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'tokenmedia_set_addr');
-          await this.bot.sendMessage(chatId, 'Send the watched token contract address to set media for.');
+          {
+            const pendingKey = this.pendingKey(chatId, userId);
+            this.pendingConfigInputs.set(pendingKey, 'tokenmedia_set_addr');
+            await this.sendTrackedPromptMessage(chatId, pendingKey, 'Send the watched token contract address to set media for.');
+          }
           break;
         case 'cfg:tokenmedia:clear':
-          this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'tokenmedia_clear_addr');
-          await this.bot.sendMessage(chatId, 'Send the watched token contract address to clear media for.');
+          {
+            const pendingKey = this.pendingKey(chatId, userId);
+            this.pendingConfigInputs.set(pendingKey, 'tokenmedia_clear_addr');
+            await this.sendTrackedPromptMessage(chatId, pendingKey, 'Send the watched token contract address to clear media for.');
+          }
           break;
         case 'cfg:clearmedia':
           await this.db.clearAlertMedia(chatId);
@@ -439,16 +471,25 @@ Add me to a group to monitor tokens for everyone!
           await this.showSettingsMenu(chatId, message.message_id);
           break;
         case 'cfg:web':
-          this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'website');
-          await this.bot.sendMessage(chatId, 'Send Website URL (http/https).');
+          {
+            const pendingKey = this.pendingKey(chatId, userId);
+            this.pendingConfigInputs.set(pendingKey, 'website');
+            await this.sendTrackedPromptMessage(chatId, pendingKey, 'Send Website URL (http/https).');
+          }
           break;
         case 'cfg:tg':
-          this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'telegram');
-          await this.bot.sendMessage(chatId, 'Send Telegram URL (http/https).');
+          {
+            const pendingKey = this.pendingKey(chatId, userId);
+            this.pendingConfigInputs.set(pendingKey, 'telegram');
+            await this.sendTrackedPromptMessage(chatId, pendingKey, 'Send Telegram URL (http/https).');
+          }
           break;
         case 'cfg:x':
-          this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'x');
-          await this.bot.sendMessage(chatId, 'Send X URL (http/https).');
+          {
+            const pendingKey = this.pendingKey(chatId, userId);
+            this.pendingConfigInputs.set(pendingKey, 'x');
+            await this.sendTrackedPromptMessage(chatId, pendingKey, 'Send X URL (http/https).');
+          }
           break;
         case 'cfg:clear':
           await this.db.clearAlertLinks(chatId);
@@ -464,6 +505,7 @@ Add me to a group to monitor tokens for everyone!
           } catch {
             await this.sendConfirmationMessage(chatId, '✅ Settings menu closed.');
           }
+          this.clearActiveMenuMessage(chatId, message.message_id);
           break;
       }
     } catch (error) {
@@ -490,7 +532,7 @@ Add me to a group to monitor tokens for everyone!
     try {
       const canManage = await this.canManageConfig(msg.chat, userId);
       if (!canManage) {
-        this.pendingConfigInputs.delete(key);
+        this.clearPendingState(chatId, key);
         await this.sendNoticeMessage(chatId, '❌ Only group admins can change settings.');
         return;
       }
@@ -499,7 +541,7 @@ Add me to a group to monitor tokens for everyone!
         if (msg.photo && msg.photo.length > 0) {
           const fileId = msg.photo[msg.photo.length - 1].file_id;
           await this.db.setAlertMedia(chatId, 'photo', fileId);
-          this.pendingConfigInputs.delete(key);
+          this.clearPendingState(chatId, key);
           await this.sendConfirmationMessage(chatId, '✅ Alert image saved.');
           await this.showSettingsMenu(chatId);
           return;
@@ -507,7 +549,7 @@ Add me to a group to monitor tokens for everyone!
 
         if (msg.animation) {
           await this.db.setAlertMedia(chatId, 'animation', msg.animation.file_id);
-          this.pendingConfigInputs.delete(key);
+          this.clearPendingState(chatId, key);
           await this.sendConfirmationMessage(chatId, '✅ Alert GIF saved.');
           await this.showSettingsMenu(chatId);
           return;
@@ -520,7 +562,7 @@ Add me to a group to monitor tokens for everyone!
       if (pending === 'tokenmedia_media') {
         const tokenAddress = this.pendingTokenMediaAddress.get(key);
         if (!tokenAddress) {
-          this.pendingConfigInputs.delete(key);
+          this.clearPendingState(chatId, key);
           await this.sendNoticeMessage(chatId, '❌ Token media setup expired. Please try again.');
           return;
         }
@@ -528,8 +570,7 @@ Add me to a group to monitor tokens for everyone!
         if (msg.photo && msg.photo.length > 0) {
           const fileId = msg.photo[msg.photo.length - 1].file_id;
           await this.db.setWatchedTokenMedia(chatId, tokenAddress, 'photo', fileId);
-          this.pendingConfigInputs.delete(key);
-          this.pendingTokenMediaAddress.delete(key);
+          this.clearPendingState(chatId, key);
           await this.sendConfirmationMessage(chatId, `✅ Token media saved for ${tokenAddress}.`);
           await this.showTokenSettingsMenu(chatId, tokenAddress);
           return;
@@ -537,8 +578,7 @@ Add me to a group to monitor tokens for everyone!
 
         if (msg.animation) {
           await this.db.setWatchedTokenMedia(chatId, tokenAddress, 'animation', msg.animation.file_id);
-          this.pendingConfigInputs.delete(key);
-          this.pendingTokenMediaAddress.delete(key);
+          this.clearPendingState(chatId, key);
           await this.sendConfirmationMessage(chatId, `✅ Token media saved for ${tokenAddress}.`);
           await this.showTokenSettingsMenu(chatId, tokenAddress);
           return;
@@ -554,7 +594,7 @@ Add me to a group to monitor tokens for everyone!
       }
 
       if (pending === 'tokensearch') {
-        this.pendingConfigInputs.delete(key);
+        this.clearPendingState(chatId, key);
         const query = text.trim();
         if (!query) {
           await this.sendNoticeMessage(chatId, '❌ Search query cannot be empty.');
@@ -581,7 +621,7 @@ Add me to a group to monitor tokens for everyone!
 
         this.pendingTokenMediaAddress.set(key, tokenAddress);
         this.pendingConfigInputs.set(key, 'tokenmedia_media');
-        await this.bot.sendMessage(chatId, 'Send a photo or GIF animation to attach to this token alerts.');
+        await this.sendTrackedPromptMessage(chatId, key, 'Send a photo or GIF animation to attach to this token alerts.');
         return;
       }
 
@@ -600,7 +640,7 @@ Add me to a group to monitor tokens for everyone!
         }
 
         await this.db.clearWatchedTokenMedia(chatId, tokenAddress);
-        this.pendingConfigInputs.delete(key);
+        this.clearPendingState(chatId, key);
         await this.sendConfirmationMessage(chatId, `✅ Cleared token media for ${tokenAddress}.`);
         await this.showSettingsMenu(chatId);
         return;
@@ -614,7 +654,7 @@ Add me to a group to monitor tokens for everyone!
         }
 
         await this.db.setMinBuyUsdc(chatId, minBuy);
-        this.pendingConfigInputs.delete(key);
+        this.clearPendingState(chatId, key);
         await this.sendConfirmationMessage(chatId, `✅ Min buy set to $${minBuy.toFixed(2)} USDC.`);
         await this.showSettingsMenu(chatId);
         return;
@@ -628,7 +668,7 @@ Add me to a group to monitor tokens for everyone!
         }
 
         await this.db.setIconMultiplier(chatId, iconMult);
-        this.pendingConfigInputs.delete(key);
+        this.clearPendingState(chatId, key);
         await this.sendConfirmationMessage(chatId, `✅ Icon multiplier set to x${iconMult}.`);
         await this.showSettingsMenu(chatId);
         return;
@@ -647,7 +687,7 @@ Add me to a group to monitor tokens for everyone!
         }
 
         await this.db.setBuyIconPattern(chatId, normalized);
-        this.pendingConfigInputs.delete(key);
+        this.clearPendingState(chatId, key);
         await this.sendConfirmationMessage(chatId, `✅ Alert emoji set to: ${normalized}`);
         await this.showSettingsMenu(chatId);
         return;
@@ -656,7 +696,7 @@ Add me to a group to monitor tokens for everyone!
       if (pending === 'tokenemoji') {
         const tokenAddress = this.pendingTokenConfigAddress.get(key);
         if (!tokenAddress) {
-          this.pendingConfigInputs.delete(key);
+          this.clearPendingState(chatId, key);
           await this.sendNoticeMessage(chatId, '❌ Token setup expired. Please open token settings again.');
           return;
         }
@@ -673,8 +713,7 @@ Add me to a group to monitor tokens for everyone!
         }
 
         await this.db.setTokenBuyIconPattern(chatId, tokenAddress, normalized);
-        this.pendingConfigInputs.delete(key);
-        this.pendingTokenConfigAddress.delete(key);
+        this.clearPendingState(chatId, key);
         await this.sendConfirmationMessage(chatId, normalized
           ? `✅ Token emoji set to: ${normalized}`
           : '✅ Token emoji reset to group default.');
@@ -692,7 +731,7 @@ Add me to a group to monitor tokens for everyone!
 
         const isWatching = await this.db.isWatchingToken(chatId, tokenAddress);
         if (isWatching) {
-          this.pendingConfigInputs.delete(key);
+          this.clearPendingState(chatId, key);
           await this.sendNoticeMessage(chatId, '⚠️ Already monitoring this token.');
           await this.showSettingsMenu(chatId);
           return;
@@ -706,7 +745,7 @@ Add me to a group to monitor tokens for everyone!
 
         await this.db.addWatchedToken(chatId, tokenAddress, tokenInfo.symbol, tokenInfo.name);
         await this.monitoringService.startMonitoringToken(tokenAddress);
-        this.pendingConfigInputs.delete(key);
+        this.clearPendingState(chatId, key);
 
         await this.trySetHLPMMTokenImage(chatId, tokenAddress);
 
@@ -723,7 +762,7 @@ Add me to a group to monitor tokens for everyone!
         }
 
         await this.db.setStatusIntervalMinutes(chatId, intervalHours * 60);
-        this.pendingConfigInputs.delete(key);
+        this.clearPendingState(chatId, key);
         await this.sendConfirmationMessage(chatId, `✅ Status update interval set to ${intervalHours} hour(s).`);
         await this.showSettingsMenu(chatId);
         return;
@@ -732,7 +771,7 @@ Add me to a group to monitor tokens for everyone!
       if (pending === 'tokenwebsite' || pending === 'tokentelegram' || pending === 'tokenx') {
         const tokenAddress = this.pendingTokenConfigAddress.get(key);
         if (!tokenAddress) {
-          this.pendingConfigInputs.delete(key);
+          this.clearPendingState(chatId, key);
           await this.sendNoticeMessage(chatId, '❌ Token setup expired. Please open token settings again.');
           return;
         }
@@ -749,8 +788,7 @@ Add me to a group to monitor tokens for everyone!
             : 'x';
 
         await this.db.setTokenAlertLink(chatId, tokenAddress, platform, text);
-        this.pendingConfigInputs.delete(key);
-        this.pendingTokenConfigAddress.delete(key);
+        this.clearPendingState(chatId, key);
         await this.sendConfirmationMessage(chatId, `✅ Token ${platform.toUpperCase()} link saved.`);
         await this.showTokenSettingsMenu(chatId, tokenAddress);
         return;
@@ -762,9 +800,7 @@ Add me to a group to monitor tokens for everyone!
       }
 
       await this.db.setAlertLink(chatId, pending as 'website' | 'telegram' | 'x', text);
-      this.pendingConfigInputs.delete(key);
-      this.pendingTokenMediaAddress.delete(key);
-      this.pendingTokenConfigAddress.delete(key);
+      this.clearPendingState(chatId, key);
       await this.sendConfirmationMessage(chatId, `✅ ${pending.toUpperCase()} link saved.`);
       await this.showSettingsMenu(chatId);
     } catch (error) {
@@ -1400,6 +1436,69 @@ Updated: ${new Date().toLocaleString()}
     return `${chatId}:${userId}`;
   }
 
+  private clearActiveMenuMessage(chatId: number, messageId?: number): void {
+    const trackedMessageId = this.activeMenuMessageByChat.get(chatId);
+    if (!trackedMessageId) {
+      return;
+    }
+
+    if (messageId !== undefined && trackedMessageId !== messageId) {
+      return;
+    }
+
+    this.activeMenuMessageByChat.delete(chatId);
+  }
+
+  private async registerActiveMenuMessage(chatId: number, messageId: number): Promise<void> {
+    const previousMessageId = this.activeMenuMessageByChat.get(chatId);
+    this.activeMenuMessageByChat.set(chatId, messageId);
+
+    if (previousMessageId && previousMessageId !== messageId) {
+      try {
+        await this.bot.deleteMessage(chatId, previousMessageId);
+      } catch {
+        // Ignore failures for already-deleted or non-removable messages.
+      }
+    }
+  }
+
+  private async clearTrackedPromptMessage(chatId: number, key: string): Promise<void> {
+    const messageId = this.activePromptMessageByPendingKey.get(key);
+    if (!messageId) {
+      return;
+    }
+
+    this.activePromptMessageByPendingKey.delete(key);
+    try {
+      await this.bot.deleteMessage(chatId, messageId);
+    } catch {
+      // Ignore failures for already-deleted or non-removable messages.
+    }
+  }
+
+  private async sendTrackedPromptMessage(chatId: number, key: string, text: string): Promise<void> {
+    await this.clearTrackedPromptMessage(chatId, key);
+    const sentMessage = await this.bot.sendMessage(chatId, text);
+    this.activePromptMessageByPendingKey.set(key, sentMessage.message_id);
+
+    setTimeout(() => {
+      const trackedMessageId = this.activePromptMessageByPendingKey.get(key);
+      if (trackedMessageId !== sentMessage.message_id) {
+        return;
+      }
+
+      this.activePromptMessageByPendingKey.delete(key);
+      void this.bot.deleteMessage(chatId, sentMessage.message_id).catch(() => undefined);
+    }, 120_000);
+  }
+
+  private clearPendingState(chatId: number, key: string): void {
+    this.pendingConfigInputs.delete(key);
+    this.pendingTokenMediaAddress.delete(key);
+    this.pendingTokenConfigAddress.delete(key);
+    void this.clearTrackedPromptMessage(chatId, key);
+  }
+
   private buildCloseReplyMarkup(): TelegramBot.InlineKeyboardMarkup {
     return {
       inline_keyboard: [[{ text: 'Close', callback_data: 'msg:close' }]],
@@ -1577,15 +1676,18 @@ Updated: ${new Date().toLocaleString()}
       try {
         if (settingsMenuImagePath) {
           await editAsCaption();
+          await this.registerActiveMenuMessage(chatId, messageId);
           return;
         } else {
           await editAsText();
+          await this.registerActiveMenuMessage(chatId, messageId);
           return;
         }
       } catch {
         if (!settingsMenuImagePath) {
           try {
             await editAsCaption();
+            await this.registerActiveMenuMessage(chatId, messageId);
             return;
           } catch {
             // Fall back to sending a new message
@@ -1595,14 +1697,16 @@ Updated: ${new Date().toLocaleString()}
     }
 
     if (settingsMenuImagePath) {
-      await this.bot.sendPhoto(chatId, settingsMenuImagePath, {
+      const sentMessage = await this.bot.sendPhoto(chatId, settingsMenuImagePath, {
         caption: text,
         reply_markup: replyMarkup,
       });
+      await this.registerActiveMenuMessage(chatId, sentMessage.message_id);
       return;
     }
 
-    await this.bot.sendMessage(chatId, text, { reply_markup: replyMarkup });
+    const sentMessage = await this.bot.sendMessage(chatId, text, { reply_markup: replyMarkup });
+    await this.registerActiveMenuMessage(chatId, sentMessage.message_id);
   }
 
   private getSettingsMenuImagePath(): string | null {
@@ -1718,6 +1822,7 @@ Updated: ${new Date().toLocaleString()}
           message_id: messageId,
           reply_markup: replyMarkup,
         });
+        await this.registerActiveMenuMessage(chatId, messageId);
         return;
       } catch {
         // Fall back to sending a new message.
@@ -1725,10 +1830,11 @@ Updated: ${new Date().toLocaleString()}
     }
 
     if (filteredTokens.length === 0) {
-      await this.bot.sendMessage(chatId, 'ℹ️ No tokens matched your search. Try a different query.');
+      await this.sendNoticeMessage(chatId, 'ℹ️ No tokens matched your search. Try a different query.');
     }
 
-    await this.bot.sendMessage(chatId, text, { reply_markup: replyMarkup });
+    const sentMessage = await this.bot.sendMessage(chatId, text, { reply_markup: replyMarkup });
+    await this.registerActiveMenuMessage(chatId, sentMessage.message_id);
   }
 
   private async showTokenSettingsMenu(chatId: number, tokenAddress: string, messageId?: number, returnPage: number = 0): Promise<void> {
@@ -1804,15 +1910,17 @@ Updated: ${new Date().toLocaleString()}
           parse_mode: 'Markdown',
           reply_markup: replyMarkup,
         });
+        await this.registerActiveMenuMessage(chatId, messageId);
         return;
       } catch {
         // Fall back to sending a new message.
       }
     }
 
-    await this.bot.sendMessage(chatId, text, {
+    const sentMessage = await this.bot.sendMessage(chatId, text, {
       parse_mode: 'Markdown',
       reply_markup: replyMarkup,
     });
+    await this.registerActiveMenuMessage(chatId, sentMessage.message_id);
   }
 }
