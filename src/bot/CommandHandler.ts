@@ -181,24 +181,38 @@ Add me to a group to monitor tokens for everyone!
 
       await this.bot.answerCallbackQuery(query.id);
 
-      if (data === 'cfg:token:list') {
-        await this.showTokenSelectionMenu(chatId, message.message_id);
+      if (data === 'cfg:token:list' || data.startsWith('cfg:token:list:')) {
+        const pageRaw = data.startsWith('cfg:token:list:')
+          ? data.replace('cfg:token:list:', '').trim()
+          : '0';
+        const page = parseInt(pageRaw, 10);
+        const safePage = Number.isFinite(page) ? Math.max(0, page) : 0;
+
+        await this.showTokenSelectionMenu(chatId, message.message_id, safePage);
         return;
       }
 
       if (data.startsWith('cfg:token:open:')) {
-        const tokenAddress = data.replace('cfg:token:open:', '').trim().toLowerCase();
+        const payload = data.replace('cfg:token:open:', '').trim();
+        const [tokenAddressRaw, returnPageRaw] = payload.split(':');
+        const tokenAddress = (tokenAddressRaw || '').toLowerCase();
+        const returnPage = Number.isFinite(parseInt(returnPageRaw || '0', 10))
+          ? Math.max(0, parseInt(returnPageRaw || '0', 10))
+          : 0;
+
         if (!validateEthereumAddress(tokenAddress)) {
           await this.sendNoticeMessage(chatId, '❌ Invalid token address in selection.');
           return;
         }
 
-        await this.showTokenSettingsMenu(chatId, tokenAddress, message.message_id);
+        await this.showTokenSettingsMenu(chatId, tokenAddress, message.message_id, returnPage);
         return;
       }
 
       if (data.startsWith('cfg:token:set:')) {
-        const tokenAddress = data.replace('cfg:token:set:', '').trim().toLowerCase();
+        const payload = data.replace('cfg:token:set:', '').trim();
+        const [tokenAddressRaw] = payload.split(':');
+        const tokenAddress = (tokenAddressRaw || '').toLowerCase();
         if (!validateEthereumAddress(tokenAddress)) {
           await this.sendNoticeMessage(chatId, '❌ Invalid token address in selection.');
           return;
@@ -217,7 +231,13 @@ Add me to a group to monitor tokens for everyone!
       }
 
       if (data.startsWith('cfg:token:clear:')) {
-        const tokenAddress = data.replace('cfg:token:clear:', '').trim().toLowerCase();
+        const payload = data.replace('cfg:token:clear:', '').trim();
+        const [tokenAddressRaw, returnPageRaw] = payload.split(':');
+        const tokenAddress = (tokenAddressRaw || '').toLowerCase();
+        const returnPage = Number.isFinite(parseInt(returnPageRaw || '0', 10))
+          ? Math.max(0, parseInt(returnPageRaw || '0', 10))
+          : 0;
+
         if (!validateEthereumAddress(tokenAddress)) {
           await this.sendNoticeMessage(chatId, '❌ Invalid token address in selection.');
           return;
@@ -225,12 +245,14 @@ Add me to a group to monitor tokens for everyone!
 
         await this.db.clearWatchedTokenMedia(chatId, tokenAddress);
         await this.sendConfirmationMessage(chatId, `✅ Cleared token media for ${tokenAddress}.`);
-        await this.showTokenSettingsMenu(chatId, tokenAddress, message.message_id);
+        await this.showTokenSettingsMenu(chatId, tokenAddress, message.message_id, returnPage);
         return;
       }
 
       if (data.startsWith('cfg:token:preview:')) {
-        const tokenAddress = data.replace('cfg:token:preview:', '').trim().toLowerCase();
+        const payload = data.replace('cfg:token:preview:', '').trim();
+        const [tokenAddressRaw] = payload.split(':');
+        const tokenAddress = (tokenAddressRaw || '').toLowerCase();
         if (!validateEthereumAddress(tokenAddress)) {
           await this.sendNoticeMessage(chatId, '❌ Invalid token address in selection.');
           return;
@@ -1362,7 +1384,7 @@ Updated: ${new Date().toLocaleString()}
     return `${address.slice(0, 6)}...${address.slice(-4)}`;
   }
 
-  private async showTokenSelectionMenu(chatId: number, messageId?: number): Promise<void> {
+  private async showTokenSelectionMenu(chatId: number, messageId?: number, page: number = 0): Promise<void> {
     const tokens = await this.db.getWatchedTokens(chatId);
     if (tokens.length === 0) {
       await this.sendNoticeMessage(chatId, 'ℹ️ No watched tokens yet. Add one with /watch <token_address>.');
@@ -1370,22 +1392,37 @@ Updated: ${new Date().toLocaleString()}
       return;
     }
 
+    const pageSize = 8;
+    const totalPages = Math.max(1, Math.ceil(tokens.length / pageSize));
+    const safePage = Math.max(0, Math.min(totalPages - 1, page));
+    const start = safePage * pageSize;
+    const visibleTokens = tokens.slice(start, start + pageSize);
+
     const text = [
       '🧩 Token Settings',
       '',
       'Select a token to edit token-specific media or send a token preview.',
+      `Page ${safePage + 1}/${totalPages}`,
     ].join('\n');
 
-    const tokenRows = tokens
-      .slice(0, 20)
+    const tokenRows = visibleTokens
       .map((token) => [{
         text: `${token.symbol} · ${this.shortenAddress(token.address)}`,
-        callback_data: `cfg:token:open:${token.address.toLowerCase()}`,
+        callback_data: `cfg:token:open:${token.address.toLowerCase()}:${safePage}`,
       }]);
+
+    const navigationRow: Array<{ text: string; callback_data: string }> = [];
+    if (safePage > 0) {
+      navigationRow.push({ text: '⬅️ Prev', callback_data: `cfg:token:list:${safePage - 1}` });
+    }
+    if (safePage < totalPages - 1) {
+      navigationRow.push({ text: 'Next ➡️', callback_data: `cfg:token:list:${safePage + 1}` });
+    }
 
     const replyMarkup: TelegramBot.InlineKeyboardMarkup = {
       inline_keyboard: [
         ...tokenRows,
+        ...(navigationRow.length > 0 ? [navigationRow] : []),
         [
           { text: 'Back', callback_data: 'cfg:refresh' },
           { text: 'Close', callback_data: 'cfg:close' },
@@ -1409,7 +1446,7 @@ Updated: ${new Date().toLocaleString()}
     await this.bot.sendMessage(chatId, text, { reply_markup: replyMarkup });
   }
 
-  private async showTokenSettingsMenu(chatId: number, tokenAddress: string, messageId?: number): Promise<void> {
+  private async showTokenSettingsMenu(chatId: number, tokenAddress: string, messageId?: number, returnPage: number = 0): Promise<void> {
     const normalizedToken = tokenAddress.toLowerCase();
     const watchedTokens = await this.db.getWatchedTokens(chatId);
     const token = watchedTokens.find((item) => item.address.toLowerCase() === normalizedToken);
@@ -1441,14 +1478,14 @@ Updated: ${new Date().toLocaleString()}
     const replyMarkup: TelegramBot.InlineKeyboardMarkup = {
       inline_keyboard: [
         [
-          { text: 'Set Token Media', callback_data: `cfg:token:set:${normalizedToken}` },
-          { text: 'Clear Token Media', callback_data: `cfg:token:clear:${normalizedToken}` },
+          { text: 'Set Token Media', callback_data: `cfg:token:set:${normalizedToken}:${returnPage}` },
+          { text: 'Clear Token Media', callback_data: `cfg:token:clear:${normalizedToken}:${returnPage}` },
         ],
         [
-          { text: 'Preview $100 Alert', callback_data: `cfg:token:preview:${normalizedToken}` },
+          { text: 'Preview $100 Alert', callback_data: `cfg:token:preview:${normalizedToken}:${returnPage}` },
         ],
         [
-          { text: 'Back to Tokens', callback_data: 'cfg:token:list' },
+          { text: 'Back to Tokens', callback_data: `cfg:token:list:${returnPage}` },
           { text: 'Back to Settings', callback_data: 'cfg:refresh' },
         ],
       ],
