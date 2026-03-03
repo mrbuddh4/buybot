@@ -320,6 +320,116 @@ export class Database {
     }
   }
 
+  async migrateChatData(oldChatId: number, newChatId: number): Promise<void> {
+    if (!Number.isFinite(oldChatId) || !Number.isFinite(newChatId) || oldChatId === newChatId) {
+      return;
+    }
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      await client.query(
+        `
+          INSERT INTO watched_tokens (
+            chat_id,
+            token_address,
+            symbol,
+            name,
+            alert_media_type,
+            alert_media_file_id,
+            created_at
+          )
+          SELECT
+            $2,
+            token_address,
+            symbol,
+            name,
+            alert_media_type,
+            alert_media_file_id,
+            created_at
+          FROM watched_tokens
+          WHERE chat_id = $1
+          ON CONFLICT (chat_id, token_address) DO UPDATE SET
+            symbol = EXCLUDED.symbol,
+            name = EXCLUDED.name,
+            alert_media_type = COALESCE(EXCLUDED.alert_media_type, watched_tokens.alert_media_type),
+            alert_media_file_id = COALESCE(EXCLUDED.alert_media_file_id, watched_tokens.alert_media_file_id)
+        `,
+        [oldChatId, newChatId]
+      );
+
+      await client.query(
+        `
+          INSERT INTO chat_alert_links (chat_id, website_url, telegram_url, x_url, updated_at)
+          SELECT $2, website_url, telegram_url, x_url, updated_at
+          FROM chat_alert_links
+          WHERE chat_id = $1
+          ON CONFLICT (chat_id) DO UPDATE SET
+            website_url = COALESCE(EXCLUDED.website_url, chat_alert_links.website_url),
+            telegram_url = COALESCE(EXCLUDED.telegram_url, chat_alert_links.telegram_url),
+            x_url = COALESCE(EXCLUDED.x_url, chat_alert_links.x_url),
+            updated_at = CURRENT_TIMESTAMP
+        `,
+        [oldChatId, newChatId]
+      );
+
+      await client.query(
+        `
+          INSERT INTO chat_settings (
+            chat_id,
+            min_buy_usdc,
+            icon_multiplier,
+            buy_icon_pattern,
+            status_updates_enabled,
+            status_interval_minutes,
+            status_last_sent_at,
+            alert_media_type,
+            alert_media_file_id,
+            updated_at
+          )
+          SELECT
+            $2,
+            min_buy_usdc,
+            icon_multiplier,
+            buy_icon_pattern,
+            status_updates_enabled,
+            status_interval_minutes,
+            status_last_sent_at,
+            alert_media_type,
+            alert_media_file_id,
+            updated_at
+          FROM chat_settings
+          WHERE chat_id = $1
+          ON CONFLICT (chat_id) DO UPDATE SET
+            min_buy_usdc = EXCLUDED.min_buy_usdc,
+            icon_multiplier = EXCLUDED.icon_multiplier,
+            buy_icon_pattern = EXCLUDED.buy_icon_pattern,
+            status_updates_enabled = EXCLUDED.status_updates_enabled,
+            status_interval_minutes = EXCLUDED.status_interval_minutes,
+            status_last_sent_at = COALESCE(EXCLUDED.status_last_sent_at, chat_settings.status_last_sent_at),
+            alert_media_type = COALESCE(EXCLUDED.alert_media_type, chat_settings.alert_media_type),
+            alert_media_file_id = COALESCE(EXCLUDED.alert_media_file_id, chat_settings.alert_media_file_id),
+            updated_at = CURRENT_TIMESTAMP
+        `,
+        [oldChatId, newChatId]
+      );
+
+      await client.query('DELETE FROM watched_tokens WHERE chat_id = $1', [oldChatId]);
+      await client.query('DELETE FROM chat_alert_links WHERE chat_id = $1', [oldChatId]);
+      await client.query('DELETE FROM chat_settings WHERE chat_id = $1', [oldChatId]);
+
+      await client.query('COMMIT');
+      logger.info(`Migrated chat data from ${oldChatId} to ${newChatId}`);
+    } catch (error) {
+      await client.query('ROLLBACK');
+      logger.error(`Failed to migrate chat data from ${oldChatId} to ${newChatId}:`, error);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async getAllWatchedTokens(): Promise<Array<{ token_address: string; symbol: string }>> {
     try {
       const { rows } = await this.pool.query(

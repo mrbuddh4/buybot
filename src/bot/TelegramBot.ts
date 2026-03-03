@@ -107,7 +107,10 @@ export class TelegramBot {
       void this.executeCommandIfAuthorized(msg, () => this.commandHandler.handleStatusInterval(msg, match));
     });
     this.bot.on('callback_query', (query) => this.commandHandler.handleCallbackQuery(query));
-    this.bot.on('message', (msg) => this.commandHandler.handlePendingInput(msg));
+    this.bot.on('message', (msg) => {
+      void this.commandHandler.handleChatMigration(msg);
+      void this.commandHandler.handlePendingInput(msg);
+    });
     this.bot.on('new_chat_members', (msg) => {
       if (!this.botUserId || !msg.new_chat_members || msg.new_chat_members.length === 0) {
         return;

@@ -141,6 +141,25 @@ Add me to a group to monitor tokens for everyone!
     }
   }
 
+  async handleChatMigration(msg: TelegramBot.Message): Promise<void> {
+    const currentChatId = msg.chat.id;
+    const migrateFromChatId = (msg as TelegramBot.Message & { migrate_from_chat_id?: number }).migrate_from_chat_id;
+    const migrateToChatId = (msg as TelegramBot.Message & { migrate_to_chat_id?: number }).migrate_to_chat_id;
+
+    try {
+      if (typeof migrateFromChatId === 'number' && migrateFromChatId !== currentChatId) {
+        await this.db.migrateChatData(migrateFromChatId, currentChatId);
+        return;
+      }
+
+      if (typeof migrateToChatId === 'number' && migrateToChatId !== currentChatId) {
+        await this.db.migrateChatData(currentChatId, migrateToChatId);
+      }
+    } catch (error) {
+      logger.error('Failed handling chat migration event:', error);
+    }
+  }
+
   async handleSettings(msg: TelegramBot.Message): Promise<void> {
     const chatId = msg.chat.id;
 

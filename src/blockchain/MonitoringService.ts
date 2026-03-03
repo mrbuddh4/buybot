@@ -1233,6 +1233,22 @@ export class MonitoringService {
     });
   }
 
+  private getMigratedChatIdFromError(error: unknown): number | null {
+    const migrated = Number(
+      (error as { response?: { body?: { parameters?: { migrate_to_chat_id?: number } } } })
+        ?.response
+        ?.body
+        ?.parameters
+        ?.migrate_to_chat_id
+    );
+
+    if (!Number.isFinite(migrated)) {
+      return null;
+    }
+
+    return migrated;
+  }
+
   private async sendHourlyStatusUpdates(chatId?: number): Promise<number> {
     if (!this.isRunning || this.statusUpdateInProgress) {
       return 0;
@@ -1361,6 +1377,24 @@ export class MonitoringService {
               chatsWithDeliveredStatus.add(watcher.chat_id);
             }
           } catch (error) {
+            const migratedChatId = this.getMigratedChatIdFromError(error);
+            if (migratedChatId && migratedChatId !== watcher.chat_id) {
+              try {
+                await this.db.migrateChatData(watcher.chat_id, migratedChatId);
+                await this.sendStatusUpdate(migratedChatId, message);
+                sentCount += 1;
+                if (chatId === undefined) {
+                  chatsWithDeliveredStatus.add(migratedChatId);
+                }
+                continue;
+              } catch (retryError) {
+                logger.error(
+                  `Failed to resend hourly status after chat migration ${watcher.chat_id} -> ${migratedChatId}:`,
+                  retryError
+                );
+              }
+            }
+
             logger.error(`Failed to send hourly status to chat ${watcher.chat_id}:`, error);
             if (this.isKickedChatError(error) && !this.disabledChats.has(watcher.chat_id)) {
               this.disabledChats.add(watcher.chat_id);
