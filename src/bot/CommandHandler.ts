@@ -1816,7 +1816,7 @@ Updated: ${new Date().toLocaleString()}
         ...tokenRows,
         [
           { text: 'Add Token', callback_data: 'cfg:addtoken' },
-          { text: 'Settings', callback_data: 'cfg:settings' },
+          { text: 'Global Settings', callback_data: 'cfg:settings' },
         ],
         ...(navigationRow.length > 0 ? [navigationRow] : []),
         [
