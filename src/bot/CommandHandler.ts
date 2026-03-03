@@ -1605,7 +1605,9 @@ Updated: ${new Date().toLocaleString()}
     const statusIntervalText = `${statusIntervalHours} hr`;
 
     const text = [
-      '⚙️ Group Buy Bot Settings',
+      '⚙️ Group Defaults',
+      '',
+      'Applies to all tokens unless overridden per token.',
       '',
       `Min Buy: $${settings.min_buy_usdc.toFixed(2)} USDC`,
       `Icon Scale: x${settings.icon_multiplier}`,
@@ -1642,7 +1644,7 @@ Updated: ${new Date().toLocaleString()}
           { text: 'Clear Media', callback_data: 'cfg:clearmedia' },
         ],
         [
-          { text: 'Token Settings', callback_data: 'cfg:token:list' },
+          { text: 'Per-Token Settings', callback_data: 'cfg:token:list' },
         ],
         [
           { text: 'Set Website', callback_data: 'cfg:web' },
