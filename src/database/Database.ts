@@ -522,7 +522,7 @@ export class Database {
       );
 
       return rows.map((row) => ({
-        chat_id: row.chat_id,
+        chat_id: Number(row.chat_id),
         alert_media_type: row.alert_media_type === 'photo' || row.alert_media_type === 'animation'
           ? row.alert_media_type
           : null,
