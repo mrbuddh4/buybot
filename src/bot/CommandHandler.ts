@@ -1945,7 +1945,7 @@ Updated: ${new Date().toLocaleString()}
         ],
         [
           { text: 'Add Token', callback_data: 'cfg:addtoken' },
-          { text: 'Settings', callback_data: 'cfg:settings' },
+          { text: 'Global Settings', callback_data: 'cfg:settings' },
         ],
         [
           { text: 'Back to Tokens', callback_data: `cfg:token:list:${returnPage}` },
