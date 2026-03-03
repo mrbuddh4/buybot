@@ -153,21 +153,21 @@ export class TelegramBot {
     const chatType = msg.chat.type;
     const userId = msg.from?.id;
 
-    if (!userId) {
-      return;
-    }
-
-    if (chatType === 'private') {
-      await this.commandHandler.clearTrackedUiForSlashCommand(msg.chat.id);
-      await handler();
-      return;
-    }
-
-    if (chatType !== 'group' && chatType !== 'supergroup') {
-      return;
-    }
-
     try {
+      if (!userId) {
+        return;
+      }
+
+      if (chatType === 'private') {
+        await this.commandHandler.clearTrackedUiForSlashCommand(msg.chat.id);
+        await handler();
+        return;
+      }
+
+      if (chatType !== 'group' && chatType !== 'supergroup') {
+        return;
+      }
+
       const member = await this.bot.getChatMember(msg.chat.id, userId);
       const isAdmin = member.status === 'administrator' || member.status === 'creator';
 
@@ -181,6 +181,16 @@ export class TelegramBot {
     } catch (error) {
       logger.error('Failed to validate command permissions:', error);
       await this.bot.sendMessage(msg.chat.id, '❌ Unable to verify admin permissions right now.');
+    } finally {
+      await this.tryDeleteCommandMessage(msg);
+    }
+  }
+
+  private async tryDeleteCommandMessage(msg: TelegramBotAPI.Message): Promise<void> {
+    try {
+      await this.bot.deleteMessage(msg.chat.id, msg.message_id);
+    } catch {
+      // Ignore delete failures when bot lacks permission or message is not removable.
     }
   }
 
