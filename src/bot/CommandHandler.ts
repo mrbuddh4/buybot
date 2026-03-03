@@ -19,7 +19,8 @@ type PendingConfigType =
   | 'tokenmedia_set_addr'
   | 'tokenmedia_media'
   | 'tokenmedia_clear_addr'
-  | 'statusinterval';
+  | 'statusinterval'
+  | 'tokensearch';
 
 export class CommandHandler {
   private bot: TelegramBot;
@@ -29,6 +30,7 @@ export class CommandHandler {
   private tokenMetadataService: TokenMetadataService;
   private pendingConfigInputs: Map<string, PendingConfigType> = new Map();
   private pendingTokenMediaAddress: Map<string, string> = new Map();
+  private tokenSelectionFilterByChat: Map<number, string> = new Map();
 
   constructor(bot: TelegramBot) {
     this.bot = bot;
@@ -189,6 +191,18 @@ Add me to a group to monitor tokens for everyone!
         const safePage = Number.isFinite(page) ? Math.max(0, page) : 0;
 
         await this.showTokenSelectionMenu(chatId, message.message_id, safePage);
+        return;
+      }
+
+      if (data === 'cfg:token:search') {
+        this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'tokensearch');
+        await this.bot.sendMessage(chatId, 'Send token symbol, name, or contract snippet to filter the token list.');
+        return;
+      }
+
+      if (data === 'cfg:token:search:clear') {
+        this.tokenSelectionFilterByChat.delete(chatId);
+        await this.showTokenSelectionMenu(chatId, message.message_id, 0);
         return;
       }
 
@@ -420,6 +434,18 @@ Add me to a group to monitor tokens for everyone!
 
       const text = msg.text?.trim();
       if (!text || text.startsWith('/')) {
+        return;
+      }
+
+      if (pending === 'tokensearch') {
+        this.pendingConfigInputs.delete(key);
+        const query = text.trim();
+        if (!query) {
+          await this.sendNoticeMessage(chatId, '❌ Search query cannot be empty.');
+          return;
+        }
+
+        await this.showTokenSelectionMenu(chatId, undefined, 0, query);
         return;
       }
 
@@ -1384,8 +1410,33 @@ Updated: ${new Date().toLocaleString()}
     return `${address.slice(0, 6)}...${address.slice(-4)}`;
   }
 
-  private async showTokenSelectionMenu(chatId: number, messageId?: number, page: number = 0): Promise<void> {
+  private async showTokenSelectionMenu(
+    chatId: number,
+    messageId?: number,
+    page: number = 0,
+    searchQuery?: string
+  ): Promise<void> {
     const tokens = await this.db.getWatchedTokens(chatId);
+
+    const normalizedQuery = searchQuery !== undefined
+      ? searchQuery.trim().toLowerCase()
+      : this.tokenSelectionFilterByChat.get(chatId)?.toLowerCase() || '';
+
+    if (searchQuery !== undefined) {
+      if (normalizedQuery) {
+        this.tokenSelectionFilterByChat.set(chatId, normalizedQuery);
+      } else {
+        this.tokenSelectionFilterByChat.delete(chatId);
+      }
+    }
+
+    const filteredTokens = normalizedQuery
+      ? tokens.filter((token) => {
+          const haystack = `${token.symbol} ${token.name} ${token.address}`.toLowerCase();
+          return haystack.includes(normalizedQuery);
+        })
+      : tokens;
+
     if (tokens.length === 0) {
       await this.sendNoticeMessage(chatId, 'ℹ️ No watched tokens yet. Add one with /watch <token_address>.');
       await this.showSettingsMenu(chatId, messageId);
@@ -1393,15 +1444,17 @@ Updated: ${new Date().toLocaleString()}
     }
 
     const pageSize = 8;
-    const totalPages = Math.max(1, Math.ceil(tokens.length / pageSize));
+    const totalPages = Math.max(1, Math.ceil(filteredTokens.length / pageSize));
     const safePage = Math.max(0, Math.min(totalPages - 1, page));
     const start = safePage * pageSize;
-    const visibleTokens = tokens.slice(start, start + pageSize);
+    const visibleTokens = filteredTokens.slice(start, start + pageSize);
 
     const text = [
       '🧩 Token Settings',
       '',
       'Select a token to edit token-specific media or send a token preview.',
+      ...(normalizedQuery ? [`Filter: ${normalizedQuery}`] : []),
+      `Showing ${filteredTokens.length} of ${tokens.length} token(s)`,
       `Page ${safePage + 1}/${totalPages}`,
     ].join('\n');
 
@@ -1419,8 +1472,16 @@ Updated: ${new Date().toLocaleString()}
       navigationRow.push({ text: 'Next ➡️', callback_data: `cfg:token:list:${safePage + 1}` });
     }
 
+    const utilityRow: Array<{ text: string; callback_data: string }> = [
+      { text: '🔎 Search', callback_data: 'cfg:token:search' },
+    ];
+    if (normalizedQuery) {
+      utilityRow.push({ text: '❌ Clear Search', callback_data: 'cfg:token:search:clear' });
+    }
+
     const replyMarkup: TelegramBot.InlineKeyboardMarkup = {
       inline_keyboard: [
+        utilityRow,
         ...tokenRows,
         ...(navigationRow.length > 0 ? [navigationRow] : []),
         [
@@ -1441,6 +1502,10 @@ Updated: ${new Date().toLocaleString()}
       } catch {
         // Fall back to sending a new message.
       }
+    }
+
+    if (filteredTokens.length === 0) {
+      await this.bot.sendMessage(chatId, 'ℹ️ No tokens matched your search. Try a different query.');
     }
 
     await this.bot.sendMessage(chatId, text, { reply_markup: replyMarkup });
