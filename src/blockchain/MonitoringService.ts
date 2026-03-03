@@ -41,6 +41,7 @@ export class MonitoringService {
   private hlpmmPoolTokenCache: Map<string, string> = new Map();
   private hlpmmEnabled: boolean = false;
   private disabledChats: Set<number> = new Set();
+  private supergroupUpgradeWarnedChats: Set<number> = new Set();
   private statusUpdateInterval: NodeJS.Timeout | null = null;
   private statusUpdateStartupTimeout: NodeJS.Timeout | null = null;
   private statusUpdateInProgress: boolean = false;
@@ -1249,6 +1250,11 @@ export class MonitoringService {
     return migrated;
   }
 
+  private isSupergroupUpgradeError(error: unknown): boolean {
+    const message = `${(error as { message?: string })?.message || ''}`.toLowerCase();
+    return message.includes('group chat was upgraded to a supergroup chat');
+  }
+
   private async sendHourlyStatusUpdates(chatId?: number): Promise<number> {
     if (!this.isRunning || this.statusUpdateInProgress) {
       return 0;
@@ -1393,6 +1399,16 @@ export class MonitoringService {
                   retryError
                 );
               }
+            }
+
+            if (this.isSupergroupUpgradeError(error)) {
+              if (!this.supergroupUpgradeWarnedChats.has(watcher.chat_id)) {
+                this.supergroupUpgradeWarnedChats.add(watcher.chat_id);
+                logger.warn(
+                  `Status send hit legacy group id ${watcher.chat_id}; waiting for Telegram migration payload to complete chat-id move.`
+                );
+              }
+              continue;
             }
 
             logger.error(`Failed to send hourly status to chat ${watcher.chat_id}:`, error);
