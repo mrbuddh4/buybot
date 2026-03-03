@@ -1782,6 +1782,8 @@ Updated: ${new Date().toLocaleString()}
       `Page ${safePage + 1}/${totalPages}`,
     ].join('\n');
 
+    const settingsMenuImagePath = this.getSettingsMenuImagePath();
+
     const tokenRows = visibleTokens
       .map((token) => [{
         text: `${token.symbol} · ${this.shortenAddress(token.address)}`,
@@ -1816,16 +1818,42 @@ Updated: ${new Date().toLocaleString()}
     };
 
     if (messageId) {
-      try {
+      const editAsCaption = async () => {
+        await this.bot.editMessageCaption(text, {
+          chat_id: chatId,
+          message_id: messageId,
+          reply_markup: replyMarkup,
+        });
+      };
+
+      const editAsText = async () => {
         await this.bot.editMessageText(text, {
           chat_id: chatId,
           message_id: messageId,
           reply_markup: replyMarkup,
         });
-        await this.registerActiveMenuMessage(chatId, messageId);
-        return;
+      };
+
+      try {
+        if (settingsMenuImagePath) {
+          await editAsCaption();
+          await this.registerActiveMenuMessage(chatId, messageId);
+          return;
+        } else {
+          await editAsText();
+          await this.registerActiveMenuMessage(chatId, messageId);
+          return;
+        }
       } catch {
-        // Fall back to sending a new message.
+        if (!settingsMenuImagePath) {
+          try {
+            await editAsCaption();
+            await this.registerActiveMenuMessage(chatId, messageId);
+            return;
+          } catch {
+            // Fall back to sending a new message.
+          }
+        }
       }
     }
 
@@ -1833,7 +1861,12 @@ Updated: ${new Date().toLocaleString()}
       await this.sendNoticeMessage(chatId, 'ℹ️ No tokens matched your search. Try a different query.');
     }
 
-    const sentMessage = await this.bot.sendMessage(chatId, text, { reply_markup: replyMarkup });
+    const sentMessage = settingsMenuImagePath
+      ? await this.bot.sendPhoto(chatId, settingsMenuImagePath, {
+          caption: text,
+          reply_markup: replyMarkup,
+        })
+      : await this.bot.sendMessage(chatId, text, { reply_markup: replyMarkup });
     await this.registerActiveMenuMessage(chatId, sentMessage.message_id);
   }
 
@@ -1879,6 +1912,8 @@ Updated: ${new Date().toLocaleString()}
       'Use this panel to configure settings for this token only.',
     ].join('\n');
 
+    const settingsMenuImagePath = this.getSettingsMenuImagePath();
+
     const replyMarkup: TelegramBot.InlineKeyboardMarkup = {
       inline_keyboard: [
         [
@@ -1907,24 +1942,57 @@ Updated: ${new Date().toLocaleString()}
     };
 
     if (messageId) {
-      try {
+      const editAsCaption = async () => {
+        await this.bot.editMessageCaption(text, {
+          chat_id: chatId,
+          message_id: messageId,
+          parse_mode: 'Markdown',
+          reply_markup: replyMarkup,
+        });
+      };
+
+      const editAsText = async () => {
         await this.bot.editMessageText(text, {
           chat_id: chatId,
           message_id: messageId,
           parse_mode: 'Markdown',
           reply_markup: replyMarkup,
         });
-        await this.registerActiveMenuMessage(chatId, messageId);
-        return;
+      };
+
+      try {
+        if (settingsMenuImagePath) {
+          await editAsCaption();
+          await this.registerActiveMenuMessage(chatId, messageId);
+          return;
+        } else {
+          await editAsText();
+          await this.registerActiveMenuMessage(chatId, messageId);
+          return;
+        }
       } catch {
-        // Fall back to sending a new message.
+        if (!settingsMenuImagePath) {
+          try {
+            await editAsCaption();
+            await this.registerActiveMenuMessage(chatId, messageId);
+            return;
+          } catch {
+            // Fall back to sending a new message.
+          }
+        }
       }
     }
 
-    const sentMessage = await this.bot.sendMessage(chatId, text, {
-      parse_mode: 'Markdown',
-      reply_markup: replyMarkup,
-    });
+    const sentMessage = settingsMenuImagePath
+      ? await this.bot.sendPhoto(chatId, settingsMenuImagePath, {
+          caption: text,
+          parse_mode: 'Markdown',
+          reply_markup: replyMarkup,
+        })
+      : await this.bot.sendMessage(chatId, text, {
+          parse_mode: 'Markdown',
+          reply_markup: replyMarkup,
+        });
     await this.registerActiveMenuMessage(chatId, sentMessage.message_id);
   }
 }
