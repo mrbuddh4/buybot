@@ -270,6 +270,15 @@ export class Database {
         )
       `);
 
+      await this.pool.query(`
+        CREATE TABLE IF NOT EXISTS chat_menu_messages (
+          chat_id BIGINT NOT NULL,
+          message_id BIGINT NOT NULL,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (chat_id, message_id)
+        )
+      `);
+
       await this.addColumnIfMissing('chat_settings', 'alert_media_type', 'TEXT');
       await this.addColumnIfMissing('chat_settings', 'alert_media_file_id', 'TEXT');
       await this.addColumnIfMissing('chat_settings', 'buy_icon_pattern', "TEXT DEFAULT '🟢⚔️'");
@@ -287,6 +296,7 @@ export class Database {
       await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_chat_settings ON chat_settings(chat_id)`);
       await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_token_alert_overrides_chat ON token_alert_overrides(chat_id)`);
       await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_trader_positions ON trader_positions(token_address, trader_address)`);
+      await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_chat_menu_messages_chat ON chat_menu_messages(chat_id)`);
 
       logger.info('Database tables created');
     } catch (error) {
@@ -305,6 +315,55 @@ export class Database {
       logger.info(`Token added to watchlist: ${symbol} for chat ${chatId}`);
     } catch (error) {
       logger.error('Error adding watched token:', error);
+      throw error;
+    }
+  }
+
+  async trackMenuMessage(chatId: number, messageId: number): Promise<void> {
+    try {
+      await this.pool.query(
+        `INSERT INTO chat_menu_messages (chat_id, message_id) VALUES ($1, $2) ON CONFLICT (chat_id, message_id) DO NOTHING`,
+        [chatId, messageId]
+      );
+    } catch (error) {
+      logger.error('Error tracking menu message:', error);
+      throw error;
+    }
+  }
+
+  async getTrackedMenuMessageIds(chatId: number): Promise<number[]> {
+    try {
+      const result = await this.pool.query(
+        `SELECT message_id FROM chat_menu_messages WHERE chat_id = $1 ORDER BY created_at DESC LIMIT 100`,
+        [chatId]
+      );
+
+      return result.rows
+        .map((row) => Number(row.message_id))
+        .filter((value) => Number.isFinite(value));
+    } catch (error) {
+      logger.error('Error fetching tracked menu messages:', error);
+      throw error;
+    }
+  }
+
+  async removeTrackedMenuMessage(chatId: number, messageId: number): Promise<void> {
+    try {
+      await this.pool.query(
+        'DELETE FROM chat_menu_messages WHERE chat_id = $1 AND message_id = $2',
+        [chatId, messageId]
+      );
+    } catch (error) {
+      logger.error('Error removing tracked menu message:', error);
+      throw error;
+    }
+  }
+
+  async clearTrackedMenuMessages(chatId: number): Promise<void> {
+    try {
+      await this.pool.query('DELETE FROM chat_menu_messages WHERE chat_id = $1', [chatId]);
+    } catch (error) {
+      logger.error('Error clearing tracked menu messages:', error);
       throw error;
     }
   }

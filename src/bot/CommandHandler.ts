@@ -509,6 +509,7 @@ Add me to a group to monitor tokens for everyone!
             await this.sendConfirmationMessage(chatId, '✅ Settings menu closed.');
           }
           this.clearActiveMenuMessage(chatId, message.message_id);
+          await this.db.removeTrackedMenuMessage(chatId, message.message_id).catch(() => undefined);
           break;
       }
     } catch (error) {
@@ -1441,10 +1442,20 @@ Updated: ${new Date().toLocaleString()}
 
   async clearTrackedUiForSlashCommand(chatId: number): Promise<void> {
     const trackedMenuMessageId = this.activeMenuMessageByChat.get(chatId);
-    if (trackedMenuMessageId) {
-      this.activeMenuMessageByChat.delete(chatId);
+    const persistedMenuMessageIds = await this.db.getTrackedMenuMessageIds(chatId).catch(() => []);
+    const menuMessageIds = Array.from(
+      new Set([
+        ...(trackedMenuMessageId ? [trackedMenuMessageId] : []),
+        ...persistedMenuMessageIds,
+      ])
+    );
+
+    this.activeMenuMessageByChat.delete(chatId);
+    await this.db.clearTrackedMenuMessages(chatId).catch(() => undefined);
+
+    for (const menuMessageId of menuMessageIds) {
       try {
-        await this.bot.deleteMessage(chatId, trackedMenuMessageId);
+        await this.bot.deleteMessage(chatId, menuMessageId);
       } catch {
         // Ignore failures for already-deleted or non-removable messages.
       }
@@ -1488,6 +1499,7 @@ Updated: ${new Date().toLocaleString()}
   private async registerActiveMenuMessage(chatId: number, messageId: number): Promise<void> {
     const previousMessageId = this.activeMenuMessageByChat.get(chatId);
     this.activeMenuMessageByChat.set(chatId, messageId);
+    await this.db.trackMenuMessage(chatId, messageId).catch(() => undefined);
 
     if (previousMessageId && previousMessageId !== messageId) {
       try {
@@ -1495,6 +1507,8 @@ Updated: ${new Date().toLocaleString()}
       } catch {
         // Ignore failures for already-deleted or non-removable messages.
       }
+
+      await this.db.removeTrackedMenuMessage(chatId, previousMessageId).catch(() => undefined);
     }
   }
 
