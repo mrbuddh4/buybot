@@ -54,6 +54,13 @@ export interface AlertLinks {
   x_url: string | null;
 }
 
+export interface TokenAlertOverrides {
+  buy_icon_pattern: string | null;
+  website_url: string | null;
+  telegram_url: string | null;
+  x_url: string | null;
+}
+
 export interface ChatSettings {
   min_buy_usdc: number;
   icon_multiplier: number;
@@ -241,6 +248,19 @@ export class Database {
       `);
 
       await this.pool.query(`
+        CREATE TABLE IF NOT EXISTS token_alert_overrides (
+          chat_id BIGINT NOT NULL,
+          token_address TEXT NOT NULL,
+          buy_icon_pattern TEXT,
+          website_url TEXT,
+          telegram_url TEXT,
+          x_url TEXT,
+          updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (chat_id, token_address)
+        )
+      `);
+
+      await this.pool.query(`
         CREATE TABLE IF NOT EXISTS trader_positions (
           token_address TEXT NOT NULL,
           trader_address TEXT NOT NULL,
@@ -265,6 +285,7 @@ export class Database {
       await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_tx_hash ON detected_transactions(tx_hash)`);
       await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_chat_alert_links ON chat_alert_links(chat_id)`);
       await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_chat_settings ON chat_settings(chat_id)`);
+      await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_token_alert_overrides_chat ON token_alert_overrides(chat_id)`);
       await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_trader_positions ON trader_positions(token_address, trader_address)`);
 
       logger.info('Database tables created');
@@ -415,9 +436,41 @@ export class Database {
         [oldChatId, newChatId]
       );
 
+      await client.query(
+        `
+          INSERT INTO token_alert_overrides (
+            chat_id,
+            token_address,
+            buy_icon_pattern,
+            website_url,
+            telegram_url,
+            x_url,
+            updated_at
+          )
+          SELECT
+            $2,
+            token_address,
+            buy_icon_pattern,
+            website_url,
+            telegram_url,
+            x_url,
+            updated_at
+          FROM token_alert_overrides
+          WHERE chat_id = $1
+          ON CONFLICT (chat_id, token_address) DO UPDATE SET
+            buy_icon_pattern = COALESCE(EXCLUDED.buy_icon_pattern, token_alert_overrides.buy_icon_pattern),
+            website_url = COALESCE(EXCLUDED.website_url, token_alert_overrides.website_url),
+            telegram_url = COALESCE(EXCLUDED.telegram_url, token_alert_overrides.telegram_url),
+            x_url = COALESCE(EXCLUDED.x_url, token_alert_overrides.x_url),
+            updated_at = CURRENT_TIMESTAMP
+        `,
+        [oldChatId, newChatId]
+      );
+
       await client.query('DELETE FROM watched_tokens WHERE chat_id = $1', [oldChatId]);
       await client.query('DELETE FROM chat_alert_links WHERE chat_id = $1', [oldChatId]);
       await client.query('DELETE FROM chat_settings WHERE chat_id = $1', [oldChatId]);
+      await client.query('DELETE FROM token_alert_overrides WHERE chat_id = $1', [oldChatId]);
 
       await client.query('COMMIT');
       logger.info(`Migrated chat data from ${oldChatId} to ${newChatId}`);
@@ -837,6 +890,106 @@ export class Database {
       );
     } catch (error) {
       logger.error('Error setting buy icon pattern:', error);
+      throw error;
+    }
+  }
+
+  async getTokenAlertOverrides(chatId: number, tokenAddress: string): Promise<TokenAlertOverrides> {
+    try {
+      const { rows } = await this.pool.query(
+        `SELECT buy_icon_pattern, website_url, telegram_url, x_url
+         FROM token_alert_overrides
+         WHERE chat_id = $1 AND token_address = $2`,
+        [chatId, tokenAddress.toLowerCase()]
+      );
+
+      const row = rows[0];
+      if (!row) {
+        return {
+          buy_icon_pattern: null,
+          website_url: null,
+          telegram_url: null,
+          x_url: null,
+        };
+      }
+
+      return {
+        buy_icon_pattern: row.buy_icon_pattern || null,
+        website_url: row.website_url || null,
+        telegram_url: row.telegram_url || null,
+        x_url: row.x_url || null,
+      };
+    } catch (error) {
+      logger.error('Error getting token alert overrides:', error);
+      throw error;
+    }
+  }
+
+  async setTokenBuyIconPattern(chatId: number, tokenAddress: string, buyIconPattern: string | null): Promise<void> {
+    try {
+      await this.pool.query(
+        'INSERT INTO token_alert_overrides (chat_id, token_address) VALUES ($1, $2) ON CONFLICT (chat_id, token_address) DO NOTHING',
+        [chatId, tokenAddress.toLowerCase()]
+      );
+      await this.pool.query(
+        'UPDATE token_alert_overrides SET buy_icon_pattern = $1, updated_at = CURRENT_TIMESTAMP WHERE chat_id = $2 AND token_address = $3',
+        [buyIconPattern, chatId, tokenAddress.toLowerCase()]
+      );
+    } catch (error) {
+      logger.error('Error setting token buy icon pattern:', error);
+      throw error;
+    }
+  }
+
+  async setTokenAlertLink(chatId: number, tokenAddress: string, platform: 'website' | 'telegram' | 'x', url: string): Promise<void> {
+    const columnMap = {
+      website: 'website_url',
+      telegram: 'telegram_url',
+      x: 'x_url',
+    } as const;
+
+    const columnName = columnMap[platform];
+
+    try {
+      await this.pool.query(
+        'INSERT INTO token_alert_overrides (chat_id, token_address) VALUES ($1, $2) ON CONFLICT (chat_id, token_address) DO NOTHING',
+        [chatId, tokenAddress.toLowerCase()]
+      );
+
+      await this.pool.query(
+        `UPDATE token_alert_overrides SET ${columnName} = $1, updated_at = CURRENT_TIMESTAMP WHERE chat_id = $2 AND token_address = $3`,
+        [url, chatId, tokenAddress.toLowerCase()]
+      );
+    } catch (error) {
+      logger.error('Error setting token alert link:', error);
+      throw error;
+    }
+  }
+
+  async clearTokenAlertLinks(chatId: number, tokenAddress: string): Promise<void> {
+    try {
+      await this.pool.query(
+        `
+          INSERT INTO token_alert_overrides (chat_id, token_address)
+          VALUES ($1, $2)
+          ON CONFLICT (chat_id, token_address) DO NOTHING
+        `,
+        [chatId, tokenAddress.toLowerCase()]
+      );
+
+      await this.pool.query(
+        `
+          UPDATE token_alert_overrides
+          SET website_url = NULL,
+              telegram_url = NULL,
+              x_url = NULL,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE chat_id = $1 AND token_address = $2
+        `,
+        [chatId, tokenAddress.toLowerCase()]
+      );
+    } catch (error) {
+      logger.error('Error clearing token alert links:', error);
       throw error;
     }
   }

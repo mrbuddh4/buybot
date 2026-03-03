@@ -649,6 +649,7 @@ export class MonitoringService {
       let deliveredCount = 0;
       for (const watcher of watchers) {
         const settings = await this.db.getChatSettings(watcher.chat_id);
+        const tokenOverrides = await this.db.getTokenAlertOverrides(watcher.chat_id, tokenAddress);
         const effectiveMediaType = watcher.alert_media_type || settings.alert_media_type;
         const effectiveMediaFileId = watcher.alert_media_file_id || settings.alert_media_file_id;
 
@@ -670,7 +671,7 @@ export class MonitoringService {
           priceInUsd: price?.priceInUsd || '0',
           marketCapUsd,
           iconMultiplier: settings.icon_multiplier,
-          buyIconPattern: settings.buy_icon_pattern,
+          buyIconPattern: tokenOverrides.buy_icon_pattern || settings.buy_icon_pattern,
           walletHoldingsToken: holdingsTokenDisplay,
           walletHoldingsUsd: holdingsUsdDisplay,
           walletTotalUsd: walletTotalUsdDisplay,
@@ -683,9 +684,9 @@ export class MonitoringService {
         });
 
         const links = await this.db.getAlertLinks(watcher.chat_id);
-        const websiteUrl = links.website_url || process.env.ALERT_WEBSITE_URL;
-        const telegramUrl = links.telegram_url || process.env.ALERT_TELEGRAM_URL;
-        const xUrl = links.x_url || process.env.ALERT_X_URL;
+        const websiteUrl = tokenOverrides.website_url || links.website_url || process.env.ALERT_WEBSITE_URL;
+        const telegramUrl = tokenOverrides.telegram_url || links.telegram_url || process.env.ALERT_TELEGRAM_URL;
+        const xUrl = tokenOverrides.x_url || links.x_url || process.env.ALERT_X_URL;
         const getFundedUrl = 'https://hyperpaxeer.com/';
 
         const buttonRow: Array<{ text: string; url: string }> = [];
@@ -955,6 +956,7 @@ export class MonitoringService {
       let deliveredCount = 0;
       for (const watcher of watchers) {
         const settings = await this.db.getChatSettings(watcher.chat_id);
+        const tokenOverrides = await this.db.getTokenAlertOverrides(watcher.chat_id, monitoredTokenAddress);
         const effectiveMediaType = watcher.alert_media_type || settings.alert_media_type;
         const effectiveMediaFileId = watcher.alert_media_file_id || settings.alert_media_file_id;
 
@@ -976,7 +978,7 @@ export class MonitoringService {
           priceInUsd: effectivePriceInUsd,
           marketCapUsd,
           iconMultiplier: settings.icon_multiplier,
-          buyIconPattern: settings.buy_icon_pattern,
+          buyIconPattern: tokenOverrides.buy_icon_pattern || settings.buy_icon_pattern,
           walletHoldingsToken: holdingsTokenDisplay,
           walletHoldingsUsd: holdingsUsdDisplay,
           walletTotalUsd: walletTotalUsdDisplay,
@@ -989,9 +991,9 @@ export class MonitoringService {
         });
 
         const links = await this.db.getAlertLinks(watcher.chat_id);
-        const websiteUrl = links.website_url || process.env.ALERT_WEBSITE_URL;
-        const telegramUrl = links.telegram_url || process.env.ALERT_TELEGRAM_URL;
-        const xUrl = links.x_url || process.env.ALERT_X_URL;
+        const websiteUrl = tokenOverrides.website_url || links.website_url || process.env.ALERT_WEBSITE_URL;
+        const telegramUrl = tokenOverrides.telegram_url || links.telegram_url || process.env.ALERT_TELEGRAM_URL;
+        const xUrl = tokenOverrides.x_url || links.x_url || process.env.ALERT_X_URL;
         const getFundedUrl = 'https://hyperpaxeer.com/';
 
         const buttonRow: Array<{ text: string; url: string }> = [];

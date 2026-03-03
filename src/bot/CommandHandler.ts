@@ -16,6 +16,10 @@ type PendingConfigType =
   | 'minbuy'
   | 'iconmult'
   | 'buyicons'
+  | 'tokenemoji'
+  | 'tokenwebsite'
+  | 'tokentelegram'
+  | 'tokenx'
   | 'addtoken'
   | 'media'
   | 'tokenmedia_set_addr'
@@ -33,6 +37,7 @@ export class CommandHandler {
   private tokenMetadataService: TokenMetadataService;
   private pendingConfigInputs: Map<string, PendingConfigType> = new Map();
   private pendingTokenMediaAddress: Map<string, string> = new Map();
+  private pendingTokenConfigAddress: Map<string, string> = new Map();
   private tokenSelectionFilterByChat: Map<number, string> = new Map();
 
   constructor(bot: TelegramBot) {
@@ -164,7 +169,7 @@ Add me to a group to monitor tokens for everyone!
     const chatId = msg.chat.id;
 
     try {
-      await this.showSettingsMenu(chatId);
+      await this.showTokenSelectionMenu(chatId);
     } catch (error) {
       logger.error('Error handling /settings command:', error);
       await this.sendNoticeMessage(chatId, '❌ Failed to open settings menu.');
@@ -298,6 +303,85 @@ Add me to a group to monitor tokens for everyone!
         return;
       }
 
+      if (data.startsWith('cfg:token:emoji:')) {
+        const payload = data.replace('cfg:token:emoji:', '').trim();
+        const [tokenAddressRaw] = payload.split(':');
+        const tokenAddress = (tokenAddressRaw || '').toLowerCase();
+        if (!validateEthereumAddress(tokenAddress)) {
+          await this.sendNoticeMessage(chatId, '❌ Invalid token address in selection.');
+          return;
+        }
+
+        this.pendingTokenConfigAddress.set(this.pendingKey(chatId, userId), tokenAddress);
+        this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'tokenemoji');
+        await this.bot.sendMessage(chatId, 'Send emoji pattern for this token alerts (example: 🟢⚔️ or 💚). Send "default" to reset.');
+        return;
+      }
+
+      if (data.startsWith('cfg:token:web:')) {
+        const payload = data.replace('cfg:token:web:', '').trim();
+        const [tokenAddressRaw] = payload.split(':');
+        const tokenAddress = (tokenAddressRaw || '').toLowerCase();
+        if (!validateEthereumAddress(tokenAddress)) {
+          await this.sendNoticeMessage(chatId, '❌ Invalid token address in selection.');
+          return;
+        }
+
+        this.pendingTokenConfigAddress.set(this.pendingKey(chatId, userId), tokenAddress);
+        this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'tokenwebsite');
+        await this.bot.sendMessage(chatId, 'Send token-specific Website URL (http/https).');
+        return;
+      }
+
+      if (data.startsWith('cfg:token:tg:')) {
+        const payload = data.replace('cfg:token:tg:', '').trim();
+        const [tokenAddressRaw] = payload.split(':');
+        const tokenAddress = (tokenAddressRaw || '').toLowerCase();
+        if (!validateEthereumAddress(tokenAddress)) {
+          await this.sendNoticeMessage(chatId, '❌ Invalid token address in selection.');
+          return;
+        }
+
+        this.pendingTokenConfigAddress.set(this.pendingKey(chatId, userId), tokenAddress);
+        this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'tokentelegram');
+        await this.bot.sendMessage(chatId, 'Send token-specific Telegram URL (http/https).');
+        return;
+      }
+
+      if (data.startsWith('cfg:token:x:')) {
+        const payload = data.replace('cfg:token:x:', '').trim();
+        const [tokenAddressRaw] = payload.split(':');
+        const tokenAddress = (tokenAddressRaw || '').toLowerCase();
+        if (!validateEthereumAddress(tokenAddress)) {
+          await this.sendNoticeMessage(chatId, '❌ Invalid token address in selection.');
+          return;
+        }
+
+        this.pendingTokenConfigAddress.set(this.pendingKey(chatId, userId), tokenAddress);
+        this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'tokenx');
+        await this.bot.sendMessage(chatId, 'Send token-specific X URL (http/https).');
+        return;
+      }
+
+      if (data.startsWith('cfg:token:clearlinks:')) {
+        const payload = data.replace('cfg:token:clearlinks:', '').trim();
+        const [tokenAddressRaw, returnPageRaw] = payload.split(':');
+        const tokenAddress = (tokenAddressRaw || '').toLowerCase();
+        const returnPage = Number.isFinite(parseInt(returnPageRaw || '0', 10))
+          ? Math.max(0, parseInt(returnPageRaw || '0', 10))
+          : 0;
+
+        if (!validateEthereumAddress(tokenAddress)) {
+          await this.sendNoticeMessage(chatId, '❌ Invalid token address in selection.');
+          return;
+        }
+
+        await this.db.clearTokenAlertLinks(chatId, tokenAddress);
+        await this.sendConfirmationMessage(chatId, `✅ Cleared token-specific links for ${tokenAddress}.`);
+        await this.showTokenSettingsMenu(chatId, tokenAddress, message.message_id, returnPage);
+        return;
+      }
+
       switch (data) {
         case 'cfg:minbuy':
           this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'minbuy');
@@ -309,7 +393,7 @@ Add me to a group to monitor tokens for everyone!
           break;
         case 'cfg:buyicons':
           this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'buyicons');
-          await this.bot.sendMessage(chatId, 'Send the buy icon pattern to use in alerts (example: 🟢⚔️ or 💚). Send "default" to reset.');
+          await this.bot.sendMessage(chatId, 'Send emoji pattern for alerts (example: 🟢⚔️ or 💚). Send "default" to reset.');
           break;
         case 'cfg:addtoken':
           this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'addtoken');
@@ -362,7 +446,7 @@ Add me to a group to monitor tokens for everyone!
           await this.showSettingsMenu(chatId, message.message_id);
           break;
         case 'cfg:refresh':
-          await this.showSettingsMenu(chatId, message.message_id);
+          await this.showTokenSelectionMenu(chatId, message.message_id);
           break;
         case 'cfg:close':
           try {
@@ -554,8 +638,37 @@ Add me to a group to monitor tokens for everyone!
 
         await this.db.setBuyIconPattern(chatId, normalized);
         this.pendingConfigInputs.delete(key);
-        await this.sendConfirmationMessage(chatId, `✅ Buy icons set to: ${normalized}`);
+        await this.sendConfirmationMessage(chatId, `✅ Alert emoji set to: ${normalized}`);
         await this.showSettingsMenu(chatId);
+        return;
+      }
+
+      if (pending === 'tokenemoji') {
+        const tokenAddress = this.pendingTokenConfigAddress.get(key);
+        if (!tokenAddress) {
+          this.pendingConfigInputs.delete(key);
+          await this.sendNoticeMessage(chatId, '❌ Token setup expired. Please open token settings again.');
+          return;
+        }
+
+        const normalized = text.toLowerCase() === 'default' ? null : text;
+        if (normalized !== null && !normalized.trim()) {
+          await this.sendNoticeMessage(chatId, '❌ Invalid value. Send at least one emoji or symbol.');
+          return;
+        }
+
+        if (normalized !== null && normalized.length > 24) {
+          await this.sendNoticeMessage(chatId, '❌ Keep it short (max 24 characters).');
+          return;
+        }
+
+        await this.db.setTokenBuyIconPattern(chatId, tokenAddress, normalized);
+        this.pendingConfigInputs.delete(key);
+        this.pendingTokenConfigAddress.delete(key);
+        await this.sendConfirmationMessage(chatId, normalized
+          ? `✅ Token emoji set to: ${normalized}`
+          : '✅ Token emoji reset to group default.');
+        await this.showTokenSettingsMenu(chatId, tokenAddress);
         return;
       }
 
@@ -606,6 +719,33 @@ Add me to a group to monitor tokens for everyone!
         return;
       }
 
+      if (pending === 'tokenwebsite' || pending === 'tokentelegram' || pending === 'tokenx') {
+        const tokenAddress = this.pendingTokenConfigAddress.get(key);
+        if (!tokenAddress) {
+          this.pendingConfigInputs.delete(key);
+          await this.sendNoticeMessage(chatId, '❌ Token setup expired. Please open token settings again.');
+          return;
+        }
+
+        if (!validateHttpUrl(text)) {
+          await this.sendNoticeMessage(chatId, '❌ Invalid URL. Use http:// or https://');
+          return;
+        }
+
+        const platform = pending === 'tokenwebsite'
+          ? 'website'
+          : pending === 'tokentelegram'
+            ? 'telegram'
+            : 'x';
+
+        await this.db.setTokenAlertLink(chatId, tokenAddress, platform, text);
+        this.pendingConfigInputs.delete(key);
+        this.pendingTokenConfigAddress.delete(key);
+        await this.sendConfirmationMessage(chatId, `✅ Token ${platform.toUpperCase()} link saved.`);
+        await this.showTokenSettingsMenu(chatId, tokenAddress);
+        return;
+      }
+
       if (!validateHttpUrl(text)) {
         await this.sendNoticeMessage(chatId, '❌ Invalid URL. Use http:// or https://');
         return;
@@ -614,6 +754,7 @@ Add me to a group to monitor tokens for everyone!
       await this.db.setAlertLink(chatId, pending as 'website' | 'telegram' | 'x', text);
       this.pendingConfigInputs.delete(key);
       this.pendingTokenMediaAddress.delete(key);
+      this.pendingTokenConfigAddress.delete(key);
       await this.sendConfirmationMessage(chatId, `✅ ${pending.toUpperCase()} link saved.`);
       await this.showSettingsMenu(chatId);
     } catch (error) {
@@ -1356,7 +1497,7 @@ Updated: ${new Date().toLocaleString()}
       '',
       `Min Buy: $${settings.min_buy_usdc.toFixed(2)} USDC`,
       `Icon Scale: x${settings.icon_multiplier}`,
-      `Buy Icons: ${settings.buy_icon_pattern}`,
+      `Emoji Pattern: ${settings.buy_icon_pattern}`,
       `Auto Status: ${statusEnabledText}`,
       `Status Interval: ${statusIntervalText}`,
       `Watched Tokens: ${tokens.length}`,
@@ -1375,7 +1516,7 @@ Updated: ${new Date().toLocaleString()}
           { text: `Icon x${settings.icon_multiplier}`, callback_data: 'cfg:icon' },
         ],
         [
-          { text: 'Buy Icons', callback_data: 'cfg:buyicons' },
+          { text: 'Set Emoji', callback_data: 'cfg:buyicons' },
         ],
         [
           { text: `Status ${settings.status_updates_enabled ? 'On' : 'Off'}`, callback_data: 'cfg:status_toggle' },
@@ -1521,7 +1662,7 @@ Updated: ${new Date().toLocaleString()}
     const text = [
       '🧩 Token Settings',
       '',
-      'Select a token to edit token-specific media or send a token preview.',
+      'Select your token first, then configure emoji, links, media, and preview.',
       ...(normalizedQuery ? [`Filter: ${normalizedQuery}`] : []),
       `Showing ${filteredTokens.length} of ${tokens.length} token(s)`,
       `Page ${safePage + 1}/${totalPages}`,
@@ -1593,10 +1734,15 @@ Updated: ${new Date().toLocaleString()}
 
     const tokenWatchers = await this.db.getTokenWatchers(normalizedToken);
     const tokenWatcherConfig = tokenWatchers.find((watcher) => watcher.chat_id === chatId);
+    const tokenOverrides = await this.db.getTokenAlertOverrides(chatId, normalizedToken);
     const tokenMediaStatus = this.summarizeTokenMediaStatus(
       tokenWatcherConfig?.alert_media_type || null,
       tokenWatcherConfig?.alert_media_file_id || null
     );
+    const tokenEmojiStatus = tokenOverrides.buy_icon_pattern || 'Default (group)';
+    const tokenWebsiteStatus = tokenOverrides.website_url ? '✅' : '❌';
+    const tokenTelegramStatus = tokenOverrides.telegram_url ? '✅' : '❌';
+    const tokenXStatus = tokenOverrides.x_url ? '✅' : '❌';
 
     const text = [
       '🧩 Editing Token',
@@ -1604,6 +1750,10 @@ Updated: ${new Date().toLocaleString()}
       `${token.name} (${token.symbol})`,
       `\`${normalizedToken}\``,
       '',
+      `Token Emoji: ${tokenEmojiStatus}`,
+      `Website: ${tokenWebsiteStatus}`,
+      `Telegram: ${tokenTelegramStatus}`,
+      `X: ${tokenXStatus}`,
       `Token Media: ${tokenMediaStatus}`,
       '',
       'Use this panel to configure settings for this token only.',
@@ -1611,6 +1761,17 @@ Updated: ${new Date().toLocaleString()}
 
     const replyMarkup: TelegramBot.InlineKeyboardMarkup = {
       inline_keyboard: [
+        [
+          { text: 'Set Emoji', callback_data: `cfg:token:emoji:${normalizedToken}:${returnPage}` },
+        ],
+        [
+          { text: 'Set Website', callback_data: `cfg:token:web:${normalizedToken}:${returnPage}` },
+          { text: 'Set Telegram', callback_data: `cfg:token:tg:${normalizedToken}:${returnPage}` },
+        ],
+        [
+          { text: 'Set X', callback_data: `cfg:token:x:${normalizedToken}:${returnPage}` },
+          { text: 'Clear Token Links', callback_data: `cfg:token:clearlinks:${normalizedToken}:${returnPage}` },
+        ],
         [
           { text: 'Set Token Media', callback_data: `cfg:token:set:${normalizedToken}:${returnPage}` },
           { text: 'Clear Token Media', callback_data: `cfg:token:clear:${normalizedToken}:${returnPage}` },
