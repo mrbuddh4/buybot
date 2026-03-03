@@ -79,6 +79,9 @@ export class TelegramBot {
     this.bot.onText(/\/price (.+)/, (msg, match) => {
       void this.executeCommandIfAuthorized(msg, () => this.commandHandler.handlePrice(msg, match));
     });
+    this.bot.onText(/\/preview (.+)/, (msg, match) => {
+      void this.executeCommandIfAuthorized(msg, () => this.commandHandler.handlePreview(msg, match));
+    });
     this.bot.onText(/\/setwebsite (.+)/, (msg, match) => {
       void this.executeCommandIfAuthorized(msg, () => this.commandHandler.handleSetWebsite(msg, match));
     });
@@ -163,6 +166,7 @@ export class TelegramBot {
       { command: 'watchlist', description: 'View watched tokens' },
       { command: 'info', description: 'Detailed token info + 24h stats' },
       { command: 'price', description: 'Quick token price snapshot' },
+      { command: 'preview', description: 'Preview buy alert for a token' },
       { command: 'settings', description: 'Open settings panel' },
       { command: 'buylinks', description: 'View alert button links' },
       { command: 'statusnow', description: 'Send status updates now' },
@@ -177,6 +181,7 @@ export class TelegramBot {
       { command: 'watchlist', description: 'View watched tokens' },
       { command: 'info', description: 'Detailed token info + 24h stats' },
       { command: 'price', description: 'Quick token price snapshot' },
+      { command: 'preview', description: 'Preview buy alert for a token' },
       { command: 'settings', description: 'Open group settings' },
       { command: 'statusnow', description: 'Send status updates now' },
       { command: 'statusupdates', description: 'Toggle automatic status updates' },

@@ -5,7 +5,7 @@ import { MonitoringService } from '../blockchain/MonitoringService';
 import { TokenMetadataService } from '../blockchain/TokenMetadataService';
 import { logger } from '../utils/logger';
 import { validateEthereumAddress, validateHttpUrl } from '../utils/helpers';
-import { formatWatchlistMessage } from '../utils/formatter';
+import { formatTransactionAlert, formatWatchlistMessage } from '../utils/formatter';
 
 type PendingConfigType =
   | 'website'
@@ -56,6 +56,7 @@ I'll notify you whenever tokens you're watching are bought or sold on the blockc
 /watchlist - View your monitored tokens
 /info <address> - Full token details and 24h metrics
 /price <address> - Quick price snapshot
+/preview <address> [usd] - Preview a buy alert
 /setwebsite <url> - Set alert Website button
 /settelegram <url> - Set alert Telegram button
 /setx <url> - Set alert X button
@@ -92,6 +93,7 @@ Add me to a group to monitor tokens for everyone!
 /watchlist - View all monitored tokens
 /info <token_address> - Full token details and 24h metrics
 /price <token_address> - Quick price snapshot
+/preview <token_address> [usd] - Preview a buy alert
 /setwebsite <url> - Set alert Website button
 /settelegram <url> - Set alert Telegram button
 /setx <url> - Set alert X button
@@ -178,6 +180,65 @@ Add me to a group to monitor tokens for everyone!
       }
 
       await this.bot.answerCallbackQuery(query.id);
+
+      if (data === 'cfg:token:list') {
+        await this.showTokenSelectionMenu(chatId, message.message_id);
+        return;
+      }
+
+      if (data.startsWith('cfg:token:open:')) {
+        const tokenAddress = data.replace('cfg:token:open:', '').trim().toLowerCase();
+        if (!validateEthereumAddress(tokenAddress)) {
+          await this.sendNoticeMessage(chatId, '❌ Invalid token address in selection.');
+          return;
+        }
+
+        await this.showTokenSettingsMenu(chatId, tokenAddress, message.message_id);
+        return;
+      }
+
+      if (data.startsWith('cfg:token:set:')) {
+        const tokenAddress = data.replace('cfg:token:set:', '').trim().toLowerCase();
+        if (!validateEthereumAddress(tokenAddress)) {
+          await this.sendNoticeMessage(chatId, '❌ Invalid token address in selection.');
+          return;
+        }
+
+        const isWatching = await this.db.isWatchingToken(chatId, tokenAddress);
+        if (!isWatching) {
+          await this.sendNoticeMessage(chatId, '❌ This token is not in your watchlist.');
+          return;
+        }
+
+        this.pendingTokenMediaAddress.set(this.pendingKey(chatId, userId), tokenAddress);
+        this.pendingConfigInputs.set(this.pendingKey(chatId, userId), 'tokenmedia_media');
+        await this.bot.sendMessage(chatId, `Send a photo or GIF animation for ${tokenAddress}.`);
+        return;
+      }
+
+      if (data.startsWith('cfg:token:clear:')) {
+        const tokenAddress = data.replace('cfg:token:clear:', '').trim().toLowerCase();
+        if (!validateEthereumAddress(tokenAddress)) {
+          await this.sendNoticeMessage(chatId, '❌ Invalid token address in selection.');
+          return;
+        }
+
+        await this.db.clearWatchedTokenMedia(chatId, tokenAddress);
+        await this.sendConfirmationMessage(chatId, `✅ Cleared token media for ${tokenAddress}.`);
+        await this.showTokenSettingsMenu(chatId, tokenAddress, message.message_id);
+        return;
+      }
+
+      if (data.startsWith('cfg:token:preview:')) {
+        const tokenAddress = data.replace('cfg:token:preview:', '').trim().toLowerCase();
+        if (!validateEthereumAddress(tokenAddress)) {
+          await this.sendNoticeMessage(chatId, '❌ Invalid token address in selection.');
+          return;
+        }
+
+        await this.sendPreviewAlert(chatId, tokenAddress, 100);
+        return;
+      }
 
       switch (data) {
         case 'cfg:minbuy':
@@ -318,7 +379,7 @@ Add me to a group to monitor tokens for everyone!
           this.pendingConfigInputs.delete(key);
           this.pendingTokenMediaAddress.delete(key);
           await this.sendConfirmationMessage(chatId, `✅ Token media saved for ${tokenAddress}.`);
-          await this.showSettingsMenu(chatId);
+          await this.showTokenSettingsMenu(chatId, tokenAddress);
           return;
         }
 
@@ -327,7 +388,7 @@ Add me to a group to monitor tokens for everyone!
           this.pendingConfigInputs.delete(key);
           this.pendingTokenMediaAddress.delete(key);
           await this.sendConfirmationMessage(chatId, `✅ Token media saved for ${tokenAddress}.`);
-          await this.showSettingsMenu(chatId);
+          await this.showTokenSettingsMenu(chatId, tokenAddress);
           return;
         }
 
@@ -780,6 +841,169 @@ Updated: ${new Date().toLocaleString()}
     }
   }
 
+  async handlePreview(msg: TelegramBot.Message, match: RegExpExecArray | null): Promise<void> {
+    const chatId = msg.chat.id;
+
+    if (!match) {
+      await this.sendNoticeMessage(chatId, '❌ Usage: /preview <token_address> [usd]');
+      return;
+    }
+
+    const parts = match[1]
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+
+    if (parts.length === 0) {
+      await this.sendNoticeMessage(chatId, '❌ Usage: /preview <token_address> [usd]');
+      return;
+    }
+
+    const tokenAddress = parts[0].toLowerCase();
+    if (!validateEthereumAddress(tokenAddress)) {
+      await this.sendNoticeMessage(chatId, '❌ Invalid token address.');
+      return;
+    }
+
+    const usdValue = parts.length > 1 ? parseFloat(parts[1]) : 100;
+    if (!Number.isFinite(usdValue) || usdValue <= 0) {
+      await this.sendNoticeMessage(chatId, '❌ Invalid USD value. Example: /preview 0x... 100');
+      return;
+    }
+
+    await this.sendPreviewAlert(chatId, tokenAddress, usdValue);
+  }
+
+  private async sendPreviewAlert(chatId: number, tokenAddress: string, usdValue: number): Promise<void> {
+    try {
+      const loadingMessage = await this.bot.sendMessage(chatId, '⏳ Building preview alert...');
+
+      try {
+        const [tokenInfo, price, settings, links, tokenWatchers] = await Promise.all([
+          this.priceService.getTokenInfo(tokenAddress),
+          this.priceService.getTokenPrice(tokenAddress),
+          this.db.getChatSettings(chatId),
+          this.db.getAlertLinks(chatId),
+          this.db.getTokenWatchers(tokenAddress),
+        ]);
+
+        if (!tokenInfo || !price) {
+          await this.sendNoticeMessage(chatId, '❌ Could not build preview. Token data is unavailable right now.');
+          return;
+        }
+
+        const tokenWatcher = tokenWatchers.find((watcher) => watcher.chat_id === chatId);
+        const effectiveMediaType = tokenWatcher?.alert_media_type || settings.alert_media_type;
+        const effectiveMediaFileId = tokenWatcher?.alert_media_file_id || settings.alert_media_file_id;
+
+        const priceInUsdNumeric = parseFloat(price.priceInUsd || '0');
+        const priceInEthNumeric = parseFloat(price.priceInEth || '0');
+        if (!Number.isFinite(priceInUsdNumeric) || priceInUsdNumeric <= 0) {
+          await this.sendNoticeMessage(chatId, '❌ Could not build preview because token price is unavailable.');
+          return;
+        }
+
+        const tokenAmountNumeric = usdValue / priceInUsdNumeric;
+        const purchaseAmountPax = Number.isFinite(priceInEthNumeric) && priceInEthNumeric > 0
+          ? tokenAmountNumeric * priceInEthNumeric
+          : usdValue / 11.51;
+
+        const marketCapUsd = tokenInfo.marketCapUsd
+          ? parseFloat(tokenInfo.marketCapUsd)
+          : (parseFloat(tokenInfo.totalSupply || '0') || 0) * priceInUsdNumeric;
+
+        const txHash = `0x${Date.now().toString(16).padStart(64, '0').slice(-64)}`;
+        const buyerAddress = `0x${chatId.toString(16).replace('-', '').padStart(40, '0').slice(-40)}`;
+
+        const isHlpmm = await this.tokenMetadataService.isHLPMMToken(tokenAddress);
+        const dexSource = isHlpmm ? 'HLPMM' : 'AMM';
+        const purchaseCurrencySymbol = isHlpmm ? 'USID' : 'PAX';
+
+        const previewCore = formatTransactionAlert({
+          type: 'buy',
+          tokenAddress,
+          tokenSymbol: tokenInfo.symbol,
+          tokenName: tokenInfo.name,
+          amount: tokenAmountNumeric.toFixed(6),
+          ethValue: purchaseAmountPax.toFixed(3),
+          priceInEth: price.priceInEth || '0',
+          priceInUsd: price.priceInUsd || '0',
+          marketCapUsd: Number.isFinite(marketCapUsd) ? marketCapUsd.toString() : '0',
+          iconMultiplier: settings.icon_multiplier,
+          buyIconPattern: settings.buy_icon_pattern,
+          walletHoldingsToken: tokenAmountNumeric.toFixed(3),
+          walletHoldingsUsd: `$${Math.round(usdValue).toLocaleString()}`,
+          walletTotalUsd: `$${Math.round(usdValue * 1.5).toLocaleString()}`,
+          positionLabel: 'PREVIEW',
+          buyer: buyerAddress,
+          txHash,
+          blockNumber: 0,
+          dexSource,
+          purchaseCurrencySymbol,
+        });
+
+        const message = `<b>🧪 PREVIEW ALERT (not a real trade)</b>\n\n${previewCore}`;
+
+        const websiteUrl = links.website_url || process.env.ALERT_WEBSITE_URL;
+        const telegramUrl = links.telegram_url || process.env.ALERT_TELEGRAM_URL;
+        const xUrl = links.x_url || process.env.ALERT_X_URL;
+        const getFundedUrl = 'https://hyperpaxeer.com/';
+
+        const buttonRow: Array<{ text: string; url: string }> = [];
+        if (websiteUrl) buttonRow.push({ text: 'Website', url: websiteUrl });
+        if (telegramUrl) buttonRow.push({ text: 'Telegram', url: telegramUrl });
+        if (xUrl) buttonRow.push({ text: 'X', url: xUrl });
+        const getFundedRow: Array<{ text: string; url: string }> = [
+          { text: 'Get Funded', url: getFundedUrl },
+        ];
+
+        const replyMarkup: TelegramBot.InlineKeyboardMarkup = {
+          inline_keyboard: buttonRow.length > 0
+            ? [buttonRow, getFundedRow]
+            : [getFundedRow],
+        };
+
+        let sent = false;
+        if (effectiveMediaFileId && effectiveMediaType === 'photo') {
+          try {
+            await this.bot.sendPhoto(chatId, effectiveMediaFileId, {
+              caption: message,
+              parse_mode: 'HTML',
+              reply_markup: replyMarkup,
+            });
+            sent = true;
+          } catch (error) {
+            logger.warn('Preview photo send failed, falling back to text preview.', error);
+          }
+        } else if (effectiveMediaFileId && effectiveMediaType === 'animation') {
+          try {
+            await this.bot.sendAnimation(chatId, effectiveMediaFileId, {
+              caption: message,
+              parse_mode: 'HTML',
+              reply_markup: replyMarkup,
+            });
+            sent = true;
+          } catch (error) {
+            logger.warn('Preview animation send failed, falling back to text preview.', error);
+          }
+        }
+
+        if (!sent) {
+          await this.bot.sendMessage(chatId, message, {
+            parse_mode: 'HTML',
+            disable_web_page_preview: true,
+            reply_markup: replyMarkup,
+          });
+        }
+      } finally {
+        void this.bot.deleteMessage(chatId, loadingMessage.message_id).catch(() => undefined);
+      }
+    } catch (error) {
+      logger.error('Error sending preview alert:', error);
+      await this.sendNoticeMessage(chatId, '❌ Failed to send preview alert.');
+    }
+  }
+
   async handleSetWebsite(msg: TelegramBot.Message, match: RegExpExecArray | null): Promise<void> {
     await this.setLink(msg, match, 'website');
   }
@@ -1093,8 +1317,7 @@ Updated: ${new Date().toLocaleString()}
           { text: 'Clear Media', callback_data: 'cfg:clearmedia' },
         ],
         [
-          { text: 'Set Token Media', callback_data: 'cfg:tokenmedia:set' },
-          { text: 'Clear Token Media', callback_data: 'cfg:tokenmedia:clear' },
+          { text: 'Token Settings', callback_data: 'cfg:token:list' },
         ],
         [
           { text: 'Set Website', callback_data: 'cfg:web' },
@@ -1125,5 +1348,129 @@ Updated: ${new Date().toLocaleString()}
     }
 
     await this.bot.sendMessage(chatId, text, { reply_markup: replyMarkup });
+  }
+
+  private summarizeTokenMediaStatus(mediaType: 'photo' | 'animation' | null, mediaFileId: string | null): string {
+    if (!mediaFileId || !mediaType) {
+      return '❌ None';
+    }
+
+    return mediaType === 'animation' ? '✅ GIF' : '✅ Image';
+  }
+
+  private shortenAddress(address: string): string {
+    return `${address.slice(0, 6)}...${address.slice(-4)}`;
+  }
+
+  private async showTokenSelectionMenu(chatId: number, messageId?: number): Promise<void> {
+    const tokens = await this.db.getWatchedTokens(chatId);
+    if (tokens.length === 0) {
+      await this.sendNoticeMessage(chatId, 'ℹ️ No watched tokens yet. Add one with /watch <token_address>.');
+      await this.showSettingsMenu(chatId, messageId);
+      return;
+    }
+
+    const text = [
+      '🧩 Token Settings',
+      '',
+      'Select a token to edit token-specific media or send a token preview.',
+    ].join('\n');
+
+    const tokenRows = tokens
+      .slice(0, 20)
+      .map((token) => [{
+        text: `${token.symbol} · ${this.shortenAddress(token.address)}`,
+        callback_data: `cfg:token:open:${token.address.toLowerCase()}`,
+      }]);
+
+    const replyMarkup: TelegramBot.InlineKeyboardMarkup = {
+      inline_keyboard: [
+        ...tokenRows,
+        [
+          { text: 'Back', callback_data: 'cfg:refresh' },
+          { text: 'Close', callback_data: 'cfg:close' },
+        ],
+      ],
+    };
+
+    if (messageId) {
+      try {
+        await this.bot.editMessageText(text, {
+          chat_id: chatId,
+          message_id: messageId,
+          reply_markup: replyMarkup,
+        });
+        return;
+      } catch {
+        // Fall back to sending a new message.
+      }
+    }
+
+    await this.bot.sendMessage(chatId, text, { reply_markup: replyMarkup });
+  }
+
+  private async showTokenSettingsMenu(chatId: number, tokenAddress: string, messageId?: number): Promise<void> {
+    const normalizedToken = tokenAddress.toLowerCase();
+    const watchedTokens = await this.db.getWatchedTokens(chatId);
+    const token = watchedTokens.find((item) => item.address.toLowerCase() === normalizedToken);
+
+    if (!token) {
+      await this.sendNoticeMessage(chatId, '❌ Token is no longer in your watchlist.');
+      await this.showTokenSelectionMenu(chatId, messageId);
+      return;
+    }
+
+    const tokenWatchers = await this.db.getTokenWatchers(normalizedToken);
+    const tokenWatcherConfig = tokenWatchers.find((watcher) => watcher.chat_id === chatId);
+    const tokenMediaStatus = this.summarizeTokenMediaStatus(
+      tokenWatcherConfig?.alert_media_type || null,
+      tokenWatcherConfig?.alert_media_file_id || null
+    );
+
+    const text = [
+      '🧩 Editing Token',
+      '',
+      `${token.name} (${token.symbol})`,
+      `\`${normalizedToken}\``,
+      '',
+      `Token Media: ${tokenMediaStatus}`,
+      '',
+      'Use this panel to configure settings for this token only.',
+    ].join('\n');
+
+    const replyMarkup: TelegramBot.InlineKeyboardMarkup = {
+      inline_keyboard: [
+        [
+          { text: 'Set Token Media', callback_data: `cfg:token:set:${normalizedToken}` },
+          { text: 'Clear Token Media', callback_data: `cfg:token:clear:${normalizedToken}` },
+        ],
+        [
+          { text: 'Preview $100 Alert', callback_data: `cfg:token:preview:${normalizedToken}` },
+        ],
+        [
+          { text: 'Back to Tokens', callback_data: 'cfg:token:list' },
+          { text: 'Back to Settings', callback_data: 'cfg:refresh' },
+        ],
+      ],
+    };
+
+    if (messageId) {
+      try {
+        await this.bot.editMessageText(text, {
+          chat_id: chatId,
+          message_id: messageId,
+          parse_mode: 'Markdown',
+          reply_markup: replyMarkup,
+        });
+        return;
+      } catch {
+        // Fall back to sending a new message.
+      }
+    }
+
+    await this.bot.sendMessage(chatId, text, {
+      parse_mode: 'Markdown',
+      reply_markup: replyMarkup,
+    });
   }
 }
