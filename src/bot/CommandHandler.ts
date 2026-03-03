@@ -1,4 +1,6 @@
 import TelegramBot from 'node-telegram-bot-api';
+import fs from 'fs';
+import path from 'path';
 import { Database } from '../database/Database';
 import { PriceService } from '../blockchain/PriceService';
 import { MonitoringService } from '../blockchain/MonitoringService';
@@ -23,6 +25,7 @@ type PendingConfigType =
   | 'tokensearch';
 
 export class CommandHandler {
+  private static readonly SETTINGS_MENU_IMAGE_RELATIVE_PATH = 'assets/images/settings-menu-header.jpg';
   private bot: TelegramBot;
   private db: Database;
   private priceService: PriceService;
@@ -1344,6 +1347,8 @@ Updated: ${new Date().toLocaleString()}
       `X: ${links.x_url ? '✅' : '❌'}`,
     ].join('\n');
 
+    const settingsMenuImagePath = this.getSettingsMenuImagePath();
+
     const replyMarkup: TelegramBot.InlineKeyboardMarkup = {
       inline_keyboard: [
         [
@@ -1383,19 +1388,65 @@ Updated: ${new Date().toLocaleString()}
     };
 
     if (messageId) {
-      try {
+      const editAsCaption = async () => {
+        await this.bot.editMessageCaption(text, {
+          chat_id: chatId,
+          message_id: messageId,
+          reply_markup: replyMarkup,
+        });
+      };
+
+      const editAsText = async () => {
         await this.bot.editMessageText(text, {
           chat_id: chatId,
           message_id: messageId,
           reply_markup: replyMarkup,
         });
+      };
+
+      try {
+        if (settingsMenuImagePath) {
+          await editAsCaption();
+        } else {
+          await editAsText();
+        }
         return;
       } catch {
-        // Fall back to sending a new message
+        try {
+          if (settingsMenuImagePath) {
+            await editAsText();
+          } else {
+            await editAsCaption();
+          }
+          return;
+        } catch {
+          // Fall back to sending a new message
+        }
       }
     }
 
+    if (settingsMenuImagePath) {
+      await this.bot.sendPhoto(chatId, settingsMenuImagePath, {
+        caption: text,
+        reply_markup: replyMarkup,
+      });
+      return;
+    }
+
     await this.bot.sendMessage(chatId, text, { reply_markup: replyMarkup });
+  }
+
+  private getSettingsMenuImagePath(): string | null {
+    const absolutePath = path.resolve(process.cwd(), CommandHandler.SETTINGS_MENU_IMAGE_RELATIVE_PATH);
+
+    if (!fs.existsSync(absolutePath)) {
+      logger.warn(
+        `Permanent settings menu image not found at ${CommandHandler.SETTINGS_MENU_IMAGE_RELATIVE_PATH} (${absolutePath})`
+      );
+      return null;
+    }
+
+    return absolutePath;
   }
 
   private summarizeTokenMediaStatus(mediaType: 'photo' | 'animation' | null, mediaFileId: string | null): string {

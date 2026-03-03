@@ -84,6 +84,8 @@ ENCRYPTION_KEY=your_32_character_encryption_key_here
 - `SIDIORA_CHART_URL_TEMPLATE` - AMM alert chart link template (supports `{token}` and `{tokenLower}`)
 - `PAXFUN_CHART_URL_TEMPLATE` - HLPMM alert chart link template (supports `{token}` and `{tokenLower}`)
 
+The `/settings` menu header image is permanent and loaded only from `assets/images/settings-menu-header.jpg`.
+
 ## Usage
 
 ### Development Mode
