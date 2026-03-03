@@ -1840,6 +1840,7 @@ Updated: ${new Date().toLocaleString()}
   private async showTokenSettingsMenu(chatId: number, tokenAddress: string, messageId?: number, returnPage: number = 0): Promise<void> {
     const normalizedToken = tokenAddress.toLowerCase();
     const watchedTokens = await this.db.getWatchedTokens(chatId);
+    const chatSettings = await this.db.getChatSettings(chatId);
     const token = watchedTokens.find((item) => item.address.toLowerCase() === normalizedToken);
 
     if (!token) {
@@ -1855,7 +1856,9 @@ Updated: ${new Date().toLocaleString()}
       tokenWatcherConfig?.alert_media_type || null,
       tokenWatcherConfig?.alert_media_file_id || null
     );
-    const tokenEmojiStatus = tokenOverrides.buy_icon_pattern || 'Default (group)';
+    const groupEmojiPattern = String(chatSettings.buy_icon_pattern || '').trim();
+    const tokenEmojiOverrideStatus = tokenOverrides.buy_icon_pattern?.trim() || '❌ None';
+    const effectiveEmojiPattern = tokenOverrides.buy_icon_pattern?.trim() || groupEmojiPattern || '❌ None';
     const tokenWebsiteStatus = tokenOverrides.website_url ? '✅' : '❌';
     const tokenTelegramStatus = tokenOverrides.telegram_url ? '✅' : '❌';
     const tokenXStatus = tokenOverrides.x_url ? '✅' : '❌';
@@ -1866,7 +1869,8 @@ Updated: ${new Date().toLocaleString()}
       `${token.name} (${token.symbol})`,
       `\`${normalizedToken}\``,
       '',
-      `Token Emoji: ${tokenEmojiStatus}`,
+      `Current Alert Emoji: ${effectiveEmojiPattern}`,
+      `Token Emoji Override: ${tokenEmojiOverrideStatus}`,
       `Website: ${tokenWebsiteStatus}`,
       `Telegram: ${tokenTelegramStatus}`,
       `X: ${tokenXStatus}`,
