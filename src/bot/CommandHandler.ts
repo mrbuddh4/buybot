@@ -1439,6 +1439,39 @@ Updated: ${new Date().toLocaleString()}
     return `${chatId}:${userId}`;
   }
 
+  async clearTrackedUiForSlashCommand(chatId: number): Promise<void> {
+    const trackedMenuMessageId = this.activeMenuMessageByChat.get(chatId);
+    if (trackedMenuMessageId) {
+      this.activeMenuMessageByChat.delete(chatId);
+      try {
+        await this.bot.deleteMessage(chatId, trackedMenuMessageId);
+      } catch {
+        // Ignore failures for already-deleted or non-removable messages.
+      }
+    }
+
+    const chatPendingKeys = Array.from(this.activePromptMessageByPendingKey.keys())
+      .filter((key) => key.startsWith(`${chatId}:`));
+
+    for (const key of chatPendingKeys) {
+      const trackedPromptMessageId = this.activePromptMessageByPendingKey.get(key);
+      this.activePromptMessageByPendingKey.delete(key);
+      this.pendingConfigInputs.delete(key);
+      this.pendingTokenMediaAddress.delete(key);
+      this.pendingTokenConfigAddress.delete(key);
+
+      if (!trackedPromptMessageId) {
+        continue;
+      }
+
+      try {
+        await this.bot.deleteMessage(chatId, trackedPromptMessageId);
+      } catch {
+        // Ignore failures for already-deleted or non-removable messages.
+      }
+    }
+  }
+
   private clearActiveMenuMessage(chatId: number, messageId?: number): void {
     const trackedMessageId = this.activeMenuMessageByChat.get(chatId);
     if (!trackedMessageId) {

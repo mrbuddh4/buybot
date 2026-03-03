@@ -158,6 +158,7 @@ export class TelegramBot {
     }
 
     if (chatType === 'private') {
+      await this.commandHandler.clearTrackedUiForSlashCommand(msg.chat.id);
       await handler();
       return;
     }
@@ -175,6 +176,7 @@ export class TelegramBot {
         return;
       }
 
+      await this.commandHandler.clearTrackedUiForSlashCommand(msg.chat.id);
       await handler();
     } catch (error) {
       logger.error('Failed to validate command permissions:', error);
