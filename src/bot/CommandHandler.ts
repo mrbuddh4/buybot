@@ -303,8 +303,10 @@ Add me to a group to monitor tokens for everyone!
         return;
       }
 
-      if (data.startsWith('cfg:token:emoji:')) {
-        const payload = data.replace('cfg:token:emoji:', '').trim();
+      if (data.startsWith('cfg:tk:e:') || data.startsWith('cfg:token:emoji:')) {
+        const payload = data.startsWith('cfg:tk:e:')
+          ? data.replace('cfg:tk:e:', '').trim()
+          : data.replace('cfg:token:emoji:', '').trim();
         const [tokenAddressRaw] = payload.split(':');
         const tokenAddress = (tokenAddressRaw || '').toLowerCase();
         if (!validateEthereumAddress(tokenAddress)) {
@@ -318,8 +320,10 @@ Add me to a group to monitor tokens for everyone!
         return;
       }
 
-      if (data.startsWith('cfg:token:web:')) {
-        const payload = data.replace('cfg:token:web:', '').trim();
+      if (data.startsWith('cfg:tk:w:') || data.startsWith('cfg:token:web:')) {
+        const payload = data.startsWith('cfg:tk:w:')
+          ? data.replace('cfg:tk:w:', '').trim()
+          : data.replace('cfg:token:web:', '').trim();
         const [tokenAddressRaw] = payload.split(':');
         const tokenAddress = (tokenAddressRaw || '').toLowerCase();
         if (!validateEthereumAddress(tokenAddress)) {
@@ -333,8 +337,10 @@ Add me to a group to monitor tokens for everyone!
         return;
       }
 
-      if (data.startsWith('cfg:token:tg:')) {
-        const payload = data.replace('cfg:token:tg:', '').trim();
+      if (data.startsWith('cfg:tk:t:') || data.startsWith('cfg:token:tg:')) {
+        const payload = data.startsWith('cfg:tk:t:')
+          ? data.replace('cfg:tk:t:', '').trim()
+          : data.replace('cfg:token:tg:', '').trim();
         const [tokenAddressRaw] = payload.split(':');
         const tokenAddress = (tokenAddressRaw || '').toLowerCase();
         if (!validateEthereumAddress(tokenAddress)) {
@@ -348,8 +354,10 @@ Add me to a group to monitor tokens for everyone!
         return;
       }
 
-      if (data.startsWith('cfg:token:x:')) {
-        const payload = data.replace('cfg:token:x:', '').trim();
+      if (data.startsWith('cfg:tk:x:') || data.startsWith('cfg:token:x:')) {
+        const payload = data.startsWith('cfg:tk:x:')
+          ? data.replace('cfg:tk:x:', '').trim()
+          : data.replace('cfg:token:x:', '').trim();
         const [tokenAddressRaw] = payload.split(':');
         const tokenAddress = (tokenAddressRaw || '').toLowerCase();
         if (!validateEthereumAddress(tokenAddress)) {
@@ -363,8 +371,10 @@ Add me to a group to monitor tokens for everyone!
         return;
       }
 
-      if (data.startsWith('cfg:token:clearlinks:')) {
-        const payload = data.replace('cfg:token:clearlinks:', '').trim();
+      if (data.startsWith('cfg:tk:cl:') || data.startsWith('cfg:token:clearlinks:')) {
+        const payload = data.startsWith('cfg:tk:cl:')
+          ? data.replace('cfg:tk:cl:', '').trim()
+          : data.replace('cfg:token:clearlinks:', '').trim();
         const [tokenAddressRaw, returnPageRaw] = payload.split(':');
         const tokenAddress = (tokenAddressRaw || '').toLowerCase();
         const returnPage = Number.isFinite(parseInt(returnPageRaw || '0', 10))
@@ -1762,15 +1772,15 @@ Updated: ${new Date().toLocaleString()}
     const replyMarkup: TelegramBot.InlineKeyboardMarkup = {
       inline_keyboard: [
         [
-          { text: 'Set Emoji', callback_data: `cfg:token:emoji:${normalizedToken}:${returnPage}` },
+          { text: 'Set Emoji', callback_data: `cfg:tk:e:${normalizedToken}:${returnPage}` },
         ],
         [
-          { text: 'Set Website', callback_data: `cfg:token:web:${normalizedToken}:${returnPage}` },
-          { text: 'Set Telegram', callback_data: `cfg:token:tg:${normalizedToken}:${returnPage}` },
+          { text: 'Set Website', callback_data: `cfg:tk:w:${normalizedToken}:${returnPage}` },
+          { text: 'Set Telegram', callback_data: `cfg:tk:t:${normalizedToken}:${returnPage}` },
         ],
         [
-          { text: 'Set X', callback_data: `cfg:token:x:${normalizedToken}:${returnPage}` },
-          { text: 'Clear Token Links', callback_data: `cfg:token:clearlinks:${normalizedToken}:${returnPage}` },
+          { text: 'Set X', callback_data: `cfg:tk:x:${normalizedToken}:${returnPage}` },
+          { text: 'Clear Token Links', callback_data: `cfg:tk:cl:${normalizedToken}:${returnPage}` },
         ],
         [
           { text: 'Set Token Media', callback_data: `cfg:token:set:${normalizedToken}:${returnPage}` },
