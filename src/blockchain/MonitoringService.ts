@@ -1,6 +1,8 @@
 import { ethers } from 'ethers';
 import axios from 'axios';
 import TelegramBot from 'node-telegram-bot-api';
+import fs from 'fs';
+import path from 'path';
 import { logger } from '../utils/logger';
 import { Database } from '../database/Database';
 import { PriceService } from './PriceService';
@@ -20,6 +22,8 @@ interface SwapEvent {
 
 export class MonitoringService {
   private static instance: MonitoringService;
+  private static readonly SETTINGS_MENU_IMAGE_RELATIVE_PATH = 'assets/images/settings-menu-header.jpg';
+  private static readonly TELEGRAM_MAX_CAPTION_LENGTH = 1024;
   private provider: ethers.JsonRpcProvider;
   private bot: TelegramBot;
   private db: Database;
@@ -1207,6 +1211,28 @@ export class MonitoringService {
     return this.sendHourlyStatusUpdates(chatId);
   }
 
+  private getStatusHeaderImagePath(): string | null {
+    const absolutePath = path.resolve(process.cwd(), MonitoringService.SETTINGS_MENU_IMAGE_RELATIVE_PATH);
+    return fs.existsSync(absolutePath) ? absolutePath : null;
+  }
+
+  private async sendStatusUpdate(chatId: number, message: string): Promise<void> {
+    const imagePath = this.getStatusHeaderImagePath();
+
+    if (imagePath && message.length <= MonitoringService.TELEGRAM_MAX_CAPTION_LENGTH) {
+      await this.bot.sendPhoto(chatId, imagePath, {
+        caption: message,
+        parse_mode: 'HTML',
+      });
+      return;
+    }
+
+    await this.bot.sendMessage(chatId, message, {
+      parse_mode: 'HTML',
+      disable_web_page_preview: true,
+    });
+  }
+
   private async sendHourlyStatusUpdates(chatId?: number): Promise<number> {
     if (!this.isRunning || this.statusUpdateInProgress) {
       return 0;
@@ -1329,10 +1355,7 @@ export class MonitoringService {
               }
             }
 
-            await this.bot.sendMessage(watcher.chat_id, message, {
-              parse_mode: 'HTML',
-              disable_web_page_preview: true,
-            });
+            await this.sendStatusUpdate(watcher.chat_id, message);
             sentCount += 1;
             if (chatId === undefined) {
               chatsWithDeliveredStatus.add(watcher.chat_id);
