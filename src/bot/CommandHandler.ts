@@ -1940,6 +1940,10 @@ Updated: ${new Date().toLocaleString()}
           { text: 'Preview $100 Alert', callback_data: `cfg:token:preview:${normalizedToken}:${returnPage}` },
         ],
         [
+          { text: 'Add Token', callback_data: 'cfg:addtoken' },
+          { text: 'Settings', callback_data: 'cfg:settings' },
+        ],
+        [
           { text: 'Back to Tokens', callback_data: `cfg:token:list:${returnPage}` },
           { text: 'Back to Settings', callback_data: 'cfg:settings' },
         ],
