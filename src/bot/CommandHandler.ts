@@ -499,6 +499,9 @@ Add me to a group to monitor tokens for everyone!
         case 'cfg:refresh':
           await this.showTokenSelectionMenu(chatId, message.message_id);
           break;
+        case 'cfg:settings':
+          await this.showSettingsMenu(chatId, message.message_id);
+          break;
         case 'cfg:close':
           try {
             await this.bot.deleteMessage(chatId, message.message_id);
@@ -1811,7 +1814,7 @@ Updated: ${new Date().toLocaleString()}
         ...tokenRows,
         ...(navigationRow.length > 0 ? [navigationRow] : []),
         [
-          { text: 'Back', callback_data: 'cfg:refresh' },
+          { text: 'Back', callback_data: 'cfg:settings' },
           { text: 'Close', callback_data: 'cfg:close' },
         ],
       ],
@@ -1936,7 +1939,7 @@ Updated: ${new Date().toLocaleString()}
         ],
         [
           { text: 'Back to Tokens', callback_data: `cfg:token:list:${returnPage}` },
-          { text: 'Back to Settings', callback_data: 'cfg:refresh' },
+          { text: 'Back to Settings', callback_data: 'cfg:settings' },
         ],
       ],
     };
