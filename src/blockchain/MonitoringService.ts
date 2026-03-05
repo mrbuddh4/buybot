@@ -468,6 +468,35 @@ export class MonitoringService {
     }
   }
 
+  private estimatePurchaseUsdValue(
+    purchaseSymbol: string,
+    purchaseAmount: string,
+    fallbackUsdValue: number,
+    tokenPriceInUsd: number,
+    tokenPriceInNative: number
+  ): number {
+    const parsedPurchaseAmount = parseFloat(purchaseAmount || '0');
+    const normalizedSymbol = String(purchaseSymbol || '').trim().toUpperCase();
+
+    if (!Number.isFinite(parsedPurchaseAmount) || parsedPurchaseAmount <= 0) {
+      return Number.isFinite(fallbackUsdValue) ? fallbackUsdValue : 0;
+    }
+
+    if (normalizedSymbol === 'USDC' || normalizedSymbol === 'USDT' || normalizedSymbol === 'USID' || normalizedSymbol === 'DAI') {
+      return parsedPurchaseAmount;
+    }
+
+    const nativeSymbol = (process.env.NATIVE_CURRENCY_SYMBOL || 'PAX').trim().toUpperCase();
+    if (normalizedSymbol === nativeSymbol || normalizedSymbol === 'ETH' || normalizedSymbol === 'WETH' || normalizedSymbol === 'WPAX') {
+      const inferredNativeUsd = tokenPriceInNative > 0 ? tokenPriceInUsd / tokenPriceInNative : 0;
+      if (Number.isFinite(inferredNativeUsd) && inferredNativeUsd > 0) {
+        return parsedPurchaseAmount * inferredNativeUsd;
+      }
+    }
+
+    return Number.isFinite(fallbackUsdValue) ? fallbackUsdValue : 0;
+  }
+
   private async computePositionLabel(
     tokenAddress: string,
     walletAddress: string,
@@ -576,6 +605,13 @@ export class MonitoringService {
       const estimatedEthValue = (tokenAmountNumeric * priceInEthNumeric).toString();
       const purchaseDetails = await this.resolveAmmPurchaseDetails(tx, tokenAddress, estimatedEthValue);
       const totalUsdValue = tokenAmountNumeric * priceInUsdNumeric;
+      const purchaseUsdValue = this.estimatePurchaseUsdValue(
+        purchaseDetails.symbol,
+        purchaseDetails.amount,
+        totalUsdValue,
+        priceInUsdNumeric,
+        priceInEthNumeric
+      );
       const marketCapUsd = tokenInfo?.marketCapUsd
         || ((parseFloat(tokenInfo?.totalSupply || '0') || 0) * priceInUsdNumeric).toString();
 
@@ -681,6 +717,7 @@ export class MonitoringService {
           blockNumber: swapEvent.blockNumber,
           dexSource: 'AMM',
           purchaseCurrencySymbol: purchaseDetails.symbol,
+          purchaseAmountUsd: purchaseUsdValue,
         });
 
         const links = await this.db.getAlertLinks(watcher.chat_id);
@@ -988,6 +1025,7 @@ export class MonitoringService {
           blockNumber,
           dexSource: 'HLPMM',
           purchaseCurrencySymbol: 'USID',
+          purchaseAmountUsd: usidAmountNumeric,
         });
 
         const links = await this.db.getAlertLinks(watcher.chat_id);

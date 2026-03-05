@@ -19,6 +19,7 @@ interface TransactionAlertData {
   positionLabel?: string;
   dexSource?: 'AMM' | 'HLPMM';
   purchaseCurrencySymbol?: string;
+  purchaseAmountUsd?: number;
 }
 
 interface HourlyStatusData {
@@ -126,16 +127,20 @@ function parseUsdDisplay(value?: string): number | null {
 export function formatTransactionAlert(data: TransactionAlertData): string {
   const action = data.type === 'buy' ? 'Buy' : 'Sell';
   const actionUpper = action.toUpperCase();
-  const totalUsdValue = parseFloat(data.amount) * parseFloat(data.priceInUsd);
+  const inferredUsdValue = parseFloat(data.amount) * parseFloat(data.priceInUsd);
+  const purchaseAmountUsd = Number(data.purchaseAmountUsd);
+  const effectiveUsdValue = Number.isFinite(purchaseAmountUsd) && purchaseAmountUsd >= 0
+    ? purchaseAmountUsd
+    : inferredUsdValue;
   const statusDots = getSwapIcons(
     data.type,
-    totalUsdValue,
+    effectiveUsdValue,
     data.iconMultiplier || 1,
     (data.buyIconPattern || '🟢⚔️').trim() || '🟢⚔️'
   );
   const marketCapValue = parseFloat(data.marketCapUsd || '0');
   const marketCapText = formatUsdCompact(marketCapValue);
-  const usdDisplay = `$${Math.max(0, Math.round(totalUsdValue)).toLocaleString()}`;
+  const usdDisplay = `$${Math.max(0, Math.round(effectiveUsdValue)).toLocaleString()}`;
   const ethAmount = parseFloat(data.ethValue) || 0;
   const tokenAmount = parseFloat(data.amount) || 0;
   const tokenUnitUsdPriceText = formatTokenUsdPrice(data.priceInUsd);
