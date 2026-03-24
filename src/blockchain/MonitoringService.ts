@@ -30,6 +30,7 @@ export class MonitoringService {
   private db: Database;
   private priceService: PriceService;
   private routerAddress: string;
+  private ammExecutorAddresses: Set<string>;
   private wethAddress: string;
   private isRunning: boolean = false;
   private monitoredTokens: Map<string, ethers.Contract> = new Map();
@@ -63,8 +64,25 @@ export class MonitoringService {
     this.db = Database.getInstance();
     this.priceService = new PriceService();
     this.routerAddress = process.env.DEX_ROUTER_ADDRESS!;
+    this.ammExecutorAddresses = this.buildAmmExecutorAddressSet();
     this.wethAddress = process.env.WETH_ADDRESS!;
     this.initHLPMM();
+  }
+
+  private buildAmmExecutorAddressSet(): Set<string> {
+    const rawValues = [
+      process.env.DEX_ROUTER_ADDRESS,
+      ...(process.env.DEX_ROUTER_ADDRESSES || '')
+        .split(',')
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0),
+    ];
+
+    const addresses = rawValues
+      .map((value) => (value || '').toLowerCase())
+      .filter((value) => /^0x[a-f0-9]{40}$/.test(value));
+
+    return new Set(addresses);
   }
 
   private initHLPMM(): void {
@@ -233,21 +251,24 @@ export class MonitoringService {
     to: string,
     tx: ethers.TransactionResponse
   ): { type: 'buy' | 'sell'; trader: string } | null {
+    const zeroAddress = '0x0000000000000000000000000000000000000000';
     const normalizedFrom = from.toLowerCase();
     const normalizedTo = to.toLowerCase();
-    const normalizedRouter = this.routerAddress.toLowerCase();
     const normalizedTxFrom = tx.from.toLowerCase();
     const normalizedTxTo = tx.to?.toLowerCase() || '';
+    const toAmmExecutor = this.ammExecutorAddresses.has(normalizedTo);
+    const fromAmmExecutor = this.ammExecutorAddresses.has(normalizedFrom);
+    const txToAmmExecutor = this.ammExecutorAddresses.has(normalizedTxTo);
 
-    if (normalizedFrom === normalizedRouter) {
+    if (fromAmmExecutor) {
       return { type: 'buy', trader: to };
     }
 
-    if (normalizedTo === normalizedRouter) {
+    if (toAmmExecutor) {
       return { type: 'sell', trader: from };
     }
 
-    if (normalizedTxTo === normalizedRouter) {
+    if (txToAmmExecutor) {
       if (normalizedTo === normalizedTxFrom) {
         return { type: 'buy', trader: to };
       }
@@ -255,6 +276,16 @@ export class MonitoringService {
       if (normalizedFrom === normalizedTxFrom) {
         return { type: 'sell', trader: from };
       }
+    }
+
+    if (
+      normalizedTo === normalizedTxFrom
+      && normalizedFrom !== normalizedTxFrom
+      && normalizedFrom !== zeroAddress
+      && normalizedTxTo
+      && normalizedTxTo !== normalizedTxFrom
+    ) {
+      return { type: 'buy', trader: to };
     }
 
     return null;
