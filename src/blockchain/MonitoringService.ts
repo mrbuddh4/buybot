@@ -38,9 +38,11 @@ export class MonitoringService {
   private pollingInProgress: boolean = false;
   private lastBlockNumber: number = 0;
   private hlpmmEventEmitter: ethers.Contract | null = null;
+  private sidioraEventEmitter: ethers.Contract | null = null;
   private hlpmmFactory: ethers.Contract | null = null;
   private hlpmmUsidAddress: string | null = null;
   private hlpmmPoolTokenCache: Map<string, string> = new Map();
+  private sidioraMarketByPoolId: Map<string, { token: string; pool: string }> = new Map();
   private hlpmmEnabled: boolean = false;
   private disabledChats: Set<number> = new Set();
   private supergroupUpgradeWarnedChats: Set<number> = new Set();
@@ -99,6 +101,15 @@ export class MonitoringService {
       emitterAddr,
       [
         'event Swap(address indexed pool, address indexed sender, address tokenIn, address tokenOut, uint256 amountIn, uint256 amountOut, uint256 newReserveUSID, uint256 newReserveToken, uint256 feeAmount, uint256 timestamp)',
+      ],
+      this.provider
+    );
+
+    this.sidioraEventEmitter = new ethers.Contract(
+      emitterAddr,
+      [
+        'event MarketCreated(bytes32 indexed poolId, address indexed token, address indexed creator, address pool, address optical, uint256 timestamp, uint256 blockNumber)',
+        'event Swap(bytes32 indexed poolId, address indexed sender, bool isBuy, uint256 amountIn, uint256 amountOut, uint256 fee, uint256 price, uint256 timestamp, uint256 blockNumber)',
       ],
       this.provider
     );
@@ -236,6 +247,21 @@ export class MonitoringService {
             }
           }
 
+          if (this.hlpmmEnabled && this.sidioraEventEmitter) {
+            try {
+              const sidioraSwapFilter = this.sidioraEventEmitter.filters.Swap();
+              const sidioraSwapEvents = await this.sidioraEventEmitter.queryFilter(sidioraSwapFilter, fromBlock, currentBlock);
+
+              for (const event of sidioraSwapEvents) {
+                if ('args' in event) {
+                  await this.handleSidioraSwapEvent(event);
+                }
+              }
+            } catch (sidioraEmitterError) {
+              logger.error('Error polling Sidiora EventEmitter:', sidioraEmitterError);
+            }
+          }
+
           this.lastBlockNumber = currentBlock;
         }
       } catch (error) {
@@ -244,6 +270,101 @@ export class MonitoringService {
         this.pollingInProgress = false;
       }
     }, 3000);
+  }
+
+  private async resolveSidioraMarketByPoolId(poolId: string, upToBlock: number): Promise<{ token: string; pool: string } | null> {
+    const normalizedPoolId = poolId.toLowerCase();
+    const cached = this.sidioraMarketByPoolId.get(normalizedPoolId);
+    if (cached) {
+      return cached;
+    }
+
+    if (!this.sidioraEventEmitter) {
+      return null;
+    }
+
+    try {
+      const marketCreatedFilter = this.sidioraEventEmitter.filters.MarketCreated(poolId);
+      const events = await this.sidioraEventEmitter.queryFilter(marketCreatedFilter, 0, upToBlock);
+
+      if (events.length === 0) {
+        return null;
+      }
+
+      const latestEvent = events[events.length - 1] as any;
+      const token = String(latestEvent?.args?.[1] || '').toLowerCase();
+      const pool = String(latestEvent?.args?.[3] || '').toLowerCase();
+
+      if (!/^0x[a-f0-9]{40}$/.test(token) || !/^0x[a-f0-9]{40}$/.test(pool)) {
+        return null;
+      }
+
+      const resolved = { token, pool };
+      this.sidioraMarketByPoolId.set(normalizedPoolId, resolved);
+      return resolved;
+    } catch (error) {
+      logger.warn(`Failed to resolve Sidiora poolId ${poolId} via MarketCreated event.`, error);
+      return null;
+    }
+  }
+
+  private async handleSidioraSwapEvent(event: any): Promise<void> {
+    try {
+      if (!this.hlpmmUsidAddress) {
+        return;
+      }
+
+      const poolId = String(event?.args?.[0] || '');
+      const sender = String(event?.args?.[1] || '');
+      const isBuy = Boolean(event?.args?.[2]);
+      const amountIn = BigInt(event?.args?.[3] ?? 0n);
+      const amountOut = BigInt(event?.args?.[4] ?? 0n);
+      const feeAmount = BigInt(event?.args?.[5] ?? 0n);
+
+      const txHash = event?.log?.transactionHash || event?.transactionHash;
+      const blockNumber = event?.log?.blockNumber || event?.blockNumber;
+      const transactionIndex = Number(event?.log?.transactionIndex ?? event?.transactionIndex ?? Number.MAX_SAFE_INTEGER);
+
+      if (!poolId || !sender || !txHash || !blockNumber) {
+        return;
+      }
+
+      const market = await this.resolveSidioraMarketByPoolId(poolId, Number(blockNumber));
+      if (!market) {
+        return;
+      }
+
+      const stableToken = this.hlpmmUsidAddress.toLowerCase();
+      const tokenIn = isBuy ? stableToken : market.token;
+      const tokenOut = isBuy ? market.token : stableToken;
+
+      const legacyShapeEvent = {
+        args: [
+          market.pool,
+          sender,
+          tokenIn,
+          tokenOut,
+          amountIn,
+          amountOut,
+          0n,
+          0n,
+          feeAmount,
+          Math.floor(Date.now() / 1000),
+        ],
+        log: {
+          transactionHash: txHash,
+          blockNumber,
+          transactionIndex,
+        },
+        transactionHash: txHash,
+        blockNumber,
+        transactionIndex,
+      };
+
+      await this.handleHLPMMSwapEvent(legacyShapeEvent);
+    } catch (error) {
+      logger.error('Error handling Sidiora EventEmitter swap event:', error);
+    }
   }
 
   private classifyTransfer(
