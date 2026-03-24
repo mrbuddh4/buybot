@@ -49,6 +49,11 @@ export class MonitoringService {
   private statusUpdateInterval: NodeJS.Timeout | null = null;
   private statusUpdateStartupTimeout: NodeJS.Timeout | null = null;
   private statusUpdateInProgress: boolean = false;
+  private pollActivityDebugEnabled: boolean = false;
+  private pollWindowMinuteKey: string = '';
+  private pollWindowTransferEvents: number = 0;
+  private pollWindowLegacySwapEvents: number = 0;
+  private pollWindowSidioraSwapEvents: number = 0;
   private readonly ammRouterInterface = new ethers.Interface([
     'function swapExactETHForTokens(uint256 amountOutMin, address[] path, address to, uint256 deadline)',
     'function swapExactETHForTokensSupportingFeeOnTransferTokens(uint256 amountOutMin, address[] path, address to, uint256 deadline)',
@@ -68,7 +73,36 @@ export class MonitoringService {
     this.routerAddress = process.env.DEX_ROUTER_ADDRESS!;
     this.ammExecutorAddresses = this.buildAmmExecutorAddressSet();
     this.wethAddress = process.env.WETH_ADDRESS!;
+    this.pollActivityDebugEnabled = (process.env.POLL_ACTIVITY_DEBUG || 'false').toLowerCase() === 'true';
     this.initHLPMM();
+  }
+
+  private flushPollActivityWindow(force: boolean = false): void {
+    if (!this.pollActivityDebugEnabled) {
+      return;
+    }
+
+    const now = new Date();
+    const minuteKey = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}T${String(now.getUTCHours()).padStart(2, '0')}:${String(now.getUTCMinutes()).padStart(2, '0')}`;
+
+    if (!this.pollWindowMinuteKey) {
+      this.pollWindowMinuteKey = minuteKey;
+      return;
+    }
+
+    if (!force && minuteKey === this.pollWindowMinuteKey) {
+      return;
+    }
+
+    logger.info(
+      `Polling activity summary (${this.pollWindowMinuteKey}Z): transfers=${this.pollWindowTransferEvents}, legacyEmitterSwaps=${this.pollWindowLegacySwapEvents}, sidioraEmitterSwaps=${this.pollWindowSidioraSwapEvents}`,
+      { context: 'monitoring.poll-activity' }
+    );
+
+    this.pollWindowMinuteKey = minuteKey;
+    this.pollWindowTransferEvents = 0;
+    this.pollWindowLegacySwapEvents = 0;
+    this.pollWindowSidioraSwapEvents = 0;
   }
 
   private buildAmmExecutorAddressSet(): Set<string> {
@@ -203,6 +237,8 @@ export class MonitoringService {
     
     // Poll for new blocks every 3 seconds
     this.pollingInterval = setInterval(async () => {
+      this.flushPollActivityWindow();
+
       if (this.pollingInProgress) {
         return;
       }
@@ -218,6 +254,7 @@ export class MonitoringService {
           for (const [tokenAddress, contract] of this.monitoredTokens) {
             const filter = contract.filters.Transfer();
             const events = await this.queryFilterAdaptiveRange(contract, filter, fromBlock, currentBlock);
+            this.pollWindowTransferEvents += events.length;
             
             for (const event of events) {
               if ('args' in event) {
@@ -236,6 +273,7 @@ export class MonitoringService {
             try {
               const swapFilter = this.hlpmmEventEmitter.filters.Swap();
               const swapEvents = await this.queryFilterAdaptiveRange(this.hlpmmEventEmitter, swapFilter, fromBlock, currentBlock);
+              this.pollWindowLegacySwapEvents += swapEvents.length;
 
               for (const event of swapEvents) {
                 if ('args' in event) {
@@ -251,6 +289,7 @@ export class MonitoringService {
             try {
               const sidioraSwapFilter = this.sidioraEventEmitter.filters.Swap();
               const sidioraSwapEvents = await this.queryFilterAdaptiveRange(this.sidioraEventEmitter, sidioraSwapFilter, fromBlock, currentBlock);
+              this.pollWindowSidioraSwapEvents += sidioraSwapEvents.length;
 
               for (const event of sidioraSwapEvents) {
                 if ('args' in event) {
