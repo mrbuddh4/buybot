@@ -3,9 +3,10 @@ import sharp from 'sharp';
 import { logger } from '../utils/logger';
 import { S3Service } from '../utils/S3Service';
 import { PriceService } from './PriceService';
+import { createRpcProvider } from './rpcProvider';
 
 export class TokenMetadataService {
-  private provider: ethers.JsonRpcProvider;
+  private provider: ethers.AbstractProvider;
   private hlpmmFactoryAddress: string | null;
   private hlpmmQuoterAddress: string | null;
   private s3Service: S3Service | null = null;
@@ -13,7 +14,7 @@ export class TokenMetadataService {
   private enabled: boolean = false;
 
   constructor() {
-    this.provider = new ethers.JsonRpcProvider(process.env.RPC_ENDPOINT!);
+    this.provider = createRpcProvider();
     this.hlpmmFactoryAddress = process.env.HLPMM_FACTORY_ADDRESS || null;
     this.hlpmmQuoterAddress = process.env.HLPMM_QUOTER_ADDRESS || null;
     this.priceService = new PriceService();

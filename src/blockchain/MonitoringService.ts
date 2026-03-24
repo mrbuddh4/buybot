@@ -7,6 +7,7 @@ import { logger } from '../utils/logger';
 import { Database } from '../database/Database';
 import { PriceService } from './PriceService';
 import { formatHourlyStatusUpdate, formatTransactionAlert } from '../utils/formatter';
+import { createRpcProvider } from './rpcProvider';
 
 interface SwapEvent {
   tokenAddress: string;
@@ -24,7 +25,7 @@ export class MonitoringService {
   private static instance: MonitoringService;
   private static readonly SETTINGS_MENU_IMAGE_RELATIVE_PATH = 'assets/images/settings-menu-header.jpg';
   private static readonly TELEGRAM_MAX_CAPTION_LENGTH = 1024;
-  private provider: ethers.JsonRpcProvider;
+  private provider: ethers.AbstractProvider;
   private bot: TelegramBot;
   private db: Database;
   private priceService: PriceService;
@@ -57,8 +58,7 @@ export class MonitoringService {
   ]);
 
   private constructor(bot: TelegramBot) {
-    const rpcEndpoint = process.env.RPC_ENDPOINT!;
-    this.provider = new ethers.JsonRpcProvider(rpcEndpoint);
+    this.provider = createRpcProvider();
     this.bot = bot;
     this.db = Database.getInstance();
     this.priceService = new PriceService();

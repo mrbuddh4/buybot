@@ -1,6 +1,7 @@
 import { ethers } from 'ethers';
 import axios from 'axios';
 import { logger } from '../utils/logger';
+import { createRpcProvider } from './rpcProvider';
 
 export interface TokenPrice {
   priceInEth: string;
@@ -17,7 +18,7 @@ export interface TokenStatusMetrics {
 }
 
 export class PriceService {
-  private provider: ethers.JsonRpcProvider;
+  private provider: ethers.AbstractProvider;
   private routerAddress: string;
   private wethAddress: string;
   private usdcAddress: string;
@@ -33,8 +34,7 @@ export class PriceService {
   private walletTotalUsdCache: Map<string, { value: number | null; expiresAt: number }> = new Map();
 
   constructor() {
-    const rpcEndpoint = process.env.RPC_ENDPOINT!;
-    this.provider = new ethers.JsonRpcProvider(rpcEndpoint);
+    this.provider = createRpcProvider();
     this.routerAddress = process.env.DEX_ROUTER_ADDRESS!;
     this.wethAddress = process.env.WETH_ADDRESS!;
     this.usdcAddress = process.env.USDC_ADDRESS || '0xf8850b62AE017c55be7f571BBad840b4f3DA7D49';
