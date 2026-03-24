@@ -217,7 +217,7 @@ export class MonitoringService {
           
           for (const [tokenAddress, contract] of this.monitoredTokens) {
             const filter = contract.filters.Transfer();
-            const events = await contract.queryFilter(filter, fromBlock, currentBlock);
+            const events = await this.queryFilterAdaptiveRange(contract, filter, fromBlock, currentBlock);
             
             for (const event of events) {
               if ('args' in event) {
@@ -235,7 +235,7 @@ export class MonitoringService {
           if (this.hlpmmEnabled && this.hlpmmEventEmitter) {
             try {
               const swapFilter = this.hlpmmEventEmitter.filters.Swap();
-              const swapEvents = await this.hlpmmEventEmitter.queryFilter(swapFilter, fromBlock, currentBlock);
+              const swapEvents = await this.queryFilterAdaptiveRange(this.hlpmmEventEmitter, swapFilter, fromBlock, currentBlock);
 
               for (const event of swapEvents) {
                 if ('args' in event) {
@@ -250,7 +250,7 @@ export class MonitoringService {
           if (this.hlpmmEnabled && this.sidioraEventEmitter) {
             try {
               const sidioraSwapFilter = this.sidioraEventEmitter.filters.Swap();
-              const sidioraSwapEvents = await this.sidioraEventEmitter.queryFilter(sidioraSwapFilter, fromBlock, currentBlock);
+              const sidioraSwapEvents = await this.queryFilterAdaptiveRange(this.sidioraEventEmitter, sidioraSwapFilter, fromBlock, currentBlock);
 
               for (const event of sidioraSwapEvents) {
                 if ('args' in event) {
@@ -270,6 +270,33 @@ export class MonitoringService {
         this.pollingInProgress = false;
       }
     }, 3000);
+  }
+
+  private isRpcSingleBlockRangeError(error: unknown): boolean {
+    const message = String(error || '').toLowerCase();
+    return message.includes('maximum [from, to] blocks distance: 0');
+  }
+
+  private async queryFilterAdaptiveRange(
+    contract: any,
+    filter: any,
+    fromBlock: number,
+    toBlock: number
+  ): Promise<any[]> {
+    try {
+      return await contract.queryFilter(filter, fromBlock, toBlock);
+    } catch (error) {
+      if (!this.isRpcSingleBlockRangeError(error) || fromBlock === toBlock) {
+        throw error;
+      }
+
+      const events: any[] = [];
+      for (let block = fromBlock; block <= toBlock; block += 1) {
+        const blockEvents = await contract.queryFilter(filter, block, block);
+        events.push(...blockEvents);
+      }
+      return events;
+    }
   }
 
   private async resolveSidioraMarketByPoolId(poolId: string, upToBlock: number): Promise<{ token: string; pool: string } | null> {
