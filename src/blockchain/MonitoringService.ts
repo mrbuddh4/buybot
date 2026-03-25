@@ -589,7 +589,13 @@ export class MonitoringService {
         timeout: 12_000,
       });
 
-      await this.bot.sendPhoto(chatId, Buffer.from(response.data), options);
+      const contentType = String(response.headers['content-type'] || 'image/jpeg');
+      await this.bot.sendPhoto(
+        chatId,
+        Buffer.from(response.data),
+        options,
+        { filename: 'alert-image', contentType }
+      );
       return true;
     } catch (error) {
       logger.warn(`Failed to send photo via URL fallback for chat ${chatId}.`, error);
@@ -608,6 +614,7 @@ export class MonitoringService {
         timeout: 12_000,
       });
 
+      const contentType = String(response.headers['content-type'] || 'image/gif');
       await this.bot.sendAnimation(chatId, Buffer.from(response.data), options);
       return true;
     } catch (error) {
@@ -901,6 +908,7 @@ export class MonitoringService {
 
       // Send notification to all watchers
       let deliveredCount = 0;
+      let skippedByMinBuyCount = 0;
       for (const watcher of watchers) {
         const settings = await this.db.getChatSettings(watcher.chat_id);
         const tokenOverrides = await this.db.getTokenAlertOverrides(watcher.chat_id, tokenAddress);
@@ -908,6 +916,7 @@ export class MonitoringService {
         const effectiveMediaFileId = watcher.alert_media_file_id || settings.alert_media_file_id;
 
         if (totalUsdValue < settings.min_buy_usdc) {
+          skippedByMinBuyCount += 1;
           logger.info(
             `Skipped alert for chat ${watcher.chat_id}: swap $${totalUsdValue.toFixed(2)} below min buy $${settings.min_buy_usdc.toFixed(2)} (tx ${swapEvent.txHash})`
           );
@@ -1034,7 +1043,7 @@ export class MonitoringService {
         }
       }
 
-      if (deliveredCount > 0) {
+      if (deliveredCount > 0 || skippedByMinBuyCount === watchers.length) {
         await this.db.saveDetectedTransaction(
           tokenAddress,
           swapEvent.txHash,
@@ -1045,9 +1054,13 @@ export class MonitoringService {
           totalUsdValue
         );
         await this.db.setTraderPosition(tokenAddress, trader, currentHoldingsToken);
-        logger.info(`Delivered alert for tx ${swapEvent.txHash} to ${deliveredCount} watcher(s)`);
+        if (deliveredCount > 0) {
+          logger.info(`Delivered alert for tx ${swapEvent.txHash} to ${deliveredCount} watcher(s)`);
+        } else {
+          logger.info(`Suppressed alert for tx ${swapEvent.txHash}: below min buy for all ${watchers.length} watcher(s)`);
+        }
       } else {
-        logger.warn(`No alert delivery succeeded for tx ${swapEvent.txHash}; transaction not marked as detected.`);
+        logger.warn(`No alert delivery succeeded for tx ${swapEvent.txHash}; transaction not marked as detected. (skippedByMinBuy=${skippedByMinBuyCount}/${watchers.length})`);
       }
 
       logger.info(`Detected ${type.toUpperCase()} (AMM): ${tokenInfo?.symbol || tokenAddress} - ${swapEvent.txHash}`);
@@ -1209,6 +1222,7 @@ export class MonitoringService {
       }
 
       let deliveredCount = 0;
+      let skippedByMinBuyCount = 0;
       for (const watcher of watchers) {
         const settings = await this.db.getChatSettings(watcher.chat_id);
         const tokenOverrides = await this.db.getTokenAlertOverrides(watcher.chat_id, monitoredTokenAddress);
@@ -1216,6 +1230,7 @@ export class MonitoringService {
         const effectiveMediaFileId = watcher.alert_media_file_id || settings.alert_media_file_id;
 
         if (totalUsdValue < settings.min_buy_usdc) {
+          skippedByMinBuyCount += 1;
           logger.info(
             `Skipped HLPMM alert for chat ${watcher.chat_id}: swap $${totalUsdValue.toFixed(2)} below min buy $${settings.min_buy_usdc.toFixed(2)} (tx ${txHash})`
           );
@@ -1342,7 +1357,7 @@ export class MonitoringService {
         }
       }
 
-      if (deliveredCount > 0) {
+      if (deliveredCount > 0 || skippedByMinBuyCount === watchers.length) {
         await this.db.saveDetectedTransaction(
           monitoredTokenAddress,
           txHash,
@@ -1353,9 +1368,13 @@ export class MonitoringService {
           totalUsdValue
         );
         await this.db.setTraderPosition(monitoredTokenAddress, buyer, currentHoldingsToken);
-        logger.info(`Delivered HLPMM alert for tx ${txHash} to ${deliveredCount} watcher(s)`);
+        if (deliveredCount > 0) {
+          logger.info(`Delivered HLPMM alert for tx ${txHash} to ${deliveredCount} watcher(s)`);
+        } else {
+          logger.info(`Suppressed HLPMM alert for tx ${txHash}: below min buy for all ${watchers.length} watcher(s)`);
+        }
       } else {
-        logger.warn(`No HLPMM alert delivery succeeded for tx ${txHash}; transaction not marked as detected.`);
+        logger.warn(`No HLPMM alert delivery succeeded for tx ${txHash}; transaction not marked as detected. (skippedByMinBuy=${skippedByMinBuyCount}/${watchers.length})`);
       }
 
       logger.info(`Detected BUY (HLPMM): ${tokenInfo?.symbol || monitoredTokenAddress} - ${txHash}`);
@@ -1479,10 +1498,19 @@ export class MonitoringService {
     const imagePath = this.getStatusHeaderImagePath();
 
     if (imagePath && message.length <= MonitoringService.TELEGRAM_MAX_CAPTION_LENGTH) {
-      await this.bot.sendPhoto(chatId, imagePath, {
-        caption: message,
-        parse_mode: 'HTML',
-      });
+      const contentType = path.extname(imagePath).toLowerCase() === '.png' ? 'image/png' : 'image/jpeg';
+      await this.bot.sendPhoto(
+        chatId,
+        fs.createReadStream(imagePath),
+        {
+          caption: message,
+          parse_mode: 'HTML',
+        },
+        {
+          filename: path.basename(imagePath),
+          contentType,
+        }
+      );
       return;
     }
 
@@ -1525,6 +1553,7 @@ export class MonitoringService {
       const alignToClock = this.isStatusAlignToClockEnabled();
       const autoModeChatEligibility = new Map<number, boolean>();
       const chatsWithDeliveredStatus = new Set<number>();
+      const deliveredStatusKeys = new Set<string>();
 
       const watchedTokens = chatId !== undefined
         ? (await this.db.getWatchedTokens(chatId)).map((token) => ({
@@ -1597,6 +1626,11 @@ export class MonitoringService {
 
         for (const watcher of watchers) {
           try {
+            const statusKey = `${watcher.chat_id}:${tokenAddress}`;
+            if (deliveredStatusKeys.has(statusKey)) {
+              continue;
+            }
+
             if (chatId === undefined) {
               let shouldSend = autoModeChatEligibility.get(watcher.chat_id);
 
@@ -1636,6 +1670,7 @@ export class MonitoringService {
             }
 
             await this.sendStatusUpdate(watcher.chat_id, message);
+            deliveredStatusKeys.add(statusKey);
             sentCount += 1;
             if (chatId === undefined) {
               chatsWithDeliveredStatus.add(watcher.chat_id);
@@ -1643,9 +1678,15 @@ export class MonitoringService {
           } catch (error) {
             const migratedChatId = this.getMigratedChatIdFromError(error);
             if (migratedChatId && migratedChatId !== watcher.chat_id) {
+              const migratedStatusKey = `${migratedChatId}:${tokenAddress}`;
+              if (deliveredStatusKeys.has(migratedStatusKey)) {
+                continue;
+              }
+
               try {
                 await this.db.migrateChatData(watcher.chat_id, migratedChatId);
                 await this.sendStatusUpdate(migratedChatId, message);
+                deliveredStatusKeys.add(migratedStatusKey);
                 sentCount += 1;
                 if (chatId === undefined) {
                   chatsWithDeliveredStatus.add(migratedChatId);

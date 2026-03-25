@@ -10,7 +10,7 @@ function parseEndpointList(value?: string): string[] {
   }
 
   return value
-    .split(',')
+    .split(/[\s,;]+/)
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
 }
@@ -53,10 +53,16 @@ export function createRpcProvider(): ethers.AbstractProvider {
     return cachedProvider;
   }
 
-  const providers = endpoints.map((endpoint) => new ethers.JsonRpcProvider(endpoint));
-  const provider = providers.length === 1
-    ? providers[0]
-    : new ethers.FallbackProvider(providers);
+  const providerConfigs = endpoints.map((endpoint, index) => ({
+    provider: new ethers.JsonRpcProvider(endpoint),
+    priority: index + 1,
+    weight: 1,
+    stallTimeout: 750,
+  }));
+
+  const provider = providerConfigs.length === 1
+    ? providerConfigs[0].provider
+    : new ethers.FallbackProvider(providerConfigs, undefined, { quorum: 1 });
 
   cachedProvider = provider;
   cachedEndpointsKey = endpointKey;
