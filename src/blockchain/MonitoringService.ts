@@ -27,6 +27,7 @@ export class MonitoringService {
   private static readonly TELEGRAM_MAX_CAPTION_LENGTH = 1024;
   private provider: ethers.AbstractProvider;
   private endpointProviders: ethers.JsonRpcProvider[];
+  private endpointLabels: string[];
   private bot: TelegramBot;
   private db: Database;
   private priceService: PriceService;
@@ -55,6 +56,10 @@ export class MonitoringService {
   private pollWindowTransferEvents: number = 0;
   private pollWindowLegacySwapEvents: number = 0;
   private pollWindowSidioraSwapEvents: number = 0;
+  private rpcEndpointDiagnosticsEnabled: boolean = false;
+  private rpcDiagWindowMinuteKey: string = '';
+  private rpcDiagSuccessCounts: number[] = [];
+  private rpcDiagFailureCounts: number[] = [];
   private readonly ammRouterInterface = new ethers.Interface([
     'function swapExactETHForTokens(uint256 amountOutMin, address[] path, address to, uint256 deadline)',
     'function swapExactETHForTokensSupportingFeeOnTransferTokens(uint256 amountOutMin, address[] path, address to, uint256 deadline)',
@@ -68,7 +73,16 @@ export class MonitoringService {
 
   private constructor(bot: TelegramBot) {
     this.provider = createRpcProvider();
-    this.endpointProviders = getConfiguredRpcEndpoints().map((endpoint) => new ethers.JsonRpcProvider(endpoint));
+    const configuredRpcEndpoints = getConfiguredRpcEndpoints();
+    this.endpointProviders = configuredRpcEndpoints.map((endpoint) => new ethers.JsonRpcProvider(endpoint));
+    this.endpointLabels = configuredRpcEndpoints.map((endpoint, index) => {
+      try {
+        const parsed = new URL(endpoint);
+        return `${index + 1}:${parsed.host}${parsed.pathname}`;
+      } catch {
+        return `${index + 1}:${endpoint}`;
+      }
+    });
     this.bot = bot;
     this.db = Database.getInstance();
     this.priceService = new PriceService();
@@ -76,6 +90,9 @@ export class MonitoringService {
     this.ammExecutorAddresses = this.buildAmmExecutorAddressSet();
     this.wethAddress = process.env.WETH_ADDRESS!;
     this.pollActivityDebugEnabled = (process.env.POLL_ACTIVITY_DEBUG || 'false').toLowerCase() === 'true';
+    this.rpcEndpointDiagnosticsEnabled = (process.env.RPC_ENDPOINT_DIAGNOSTICS || 'false').toLowerCase() === 'true';
+    this.rpcDiagSuccessCounts = this.endpointProviders.map(() => 0);
+    this.rpcDiagFailureCounts = this.endpointProviders.map(() => 0);
     this.initHLPMM();
   }
 
@@ -105,6 +122,53 @@ export class MonitoringService {
     this.pollWindowTransferEvents = 0;
     this.pollWindowLegacySwapEvents = 0;
     this.pollWindowSidioraSwapEvents = 0;
+  }
+
+  private flushRpcEndpointDiagnosticsWindow(force: boolean = false): void {
+    if (!this.rpcEndpointDiagnosticsEnabled || this.endpointProviders.length === 0) {
+      return;
+    }
+
+    const now = new Date();
+    const minuteKey = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}T${String(now.getUTCHours()).padStart(2, '0')}:${String(now.getUTCMinutes()).padStart(2, '0')}`;
+
+    if (!this.rpcDiagWindowMinuteKey) {
+      this.rpcDiagWindowMinuteKey = minuteKey;
+      return;
+    }
+
+    if (!force && minuteKey === this.rpcDiagWindowMinuteKey) {
+      return;
+    }
+
+    const endpointSummary = this.endpointLabels
+      .map((label, index) => `${label} ok=${this.rpcDiagSuccessCounts[index] || 0} fail=${this.rpcDiagFailureCounts[index] || 0}`)
+      .join(' | ');
+
+    logger.info(
+      `RPC endpoint diagnostics (${this.rpcDiagWindowMinuteKey}Z): ${endpointSummary}`,
+      { context: 'monitoring.rpc-endpoint-diag' }
+    );
+
+    this.rpcDiagWindowMinuteKey = minuteKey;
+    this.rpcDiagSuccessCounts = this.endpointProviders.map(() => 0);
+    this.rpcDiagFailureCounts = this.endpointProviders.map(() => 0);
+  }
+
+  private recordRpcEndpointDiagnostic(index: number, wasSuccess: boolean): void {
+    if (!this.rpcEndpointDiagnosticsEnabled) {
+      return;
+    }
+
+    if (index < 0 || index >= this.endpointProviders.length) {
+      return;
+    }
+
+    if (wasSuccess) {
+      this.rpcDiagSuccessCounts[index] = (this.rpcDiagSuccessCounts[index] || 0) + 1;
+    } else {
+      this.rpcDiagFailureCounts[index] = (this.rpcDiagFailureCounts[index] || 0) + 1;
+    }
   }
 
   private buildAmmExecutorAddressSet(): Set<string> {
@@ -240,6 +304,7 @@ export class MonitoringService {
     // Poll for new blocks every 3 seconds
     this.pollingInterval = setInterval(async () => {
       this.flushPollActivityWindow();
+      this.flushRpcEndpointDiagnosticsWindow();
 
       if (this.pollingInProgress) {
         return;
@@ -336,9 +401,12 @@ export class MonitoringService {
     let lastError: unknown;
     for (let index = 0; index < providers.length; index += 1) {
       try {
-        return await contract.connect(providers[index]).queryFilter(filter, fromBlock, toBlock);
+        const result = await contract.connect(providers[index]).queryFilter(filter, fromBlock, toBlock);
+        this.recordRpcEndpointDiagnostic(index, true);
+        return result;
       } catch (error) {
         lastError = error;
+        this.recordRpcEndpointDiagnostic(index, false);
         logger.warn(
           `RPC endpoint ${index + 1}/${providers.length} failed queryFilter for blocks ${fromBlock}-${toBlock}; trying next endpoint.`
         );
