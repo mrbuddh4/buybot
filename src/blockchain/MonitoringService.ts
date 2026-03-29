@@ -7,7 +7,7 @@ import { logger } from '../utils/logger';
 import { Database } from '../database/Database';
 import { PriceService } from './PriceService';
 import { formatHourlyStatusUpdate, formatTransactionAlert } from '../utils/formatter';
-import { createRpcProvider } from './rpcProvider';
+import { createRpcProvider, getConfiguredRpcEndpoints } from './rpcProvider';
 
 interface SwapEvent {
   tokenAddress: string;
@@ -26,6 +26,7 @@ export class MonitoringService {
   private static readonly SETTINGS_MENU_IMAGE_RELATIVE_PATH = 'assets/images/settings-menu-header.jpg';
   private static readonly TELEGRAM_MAX_CAPTION_LENGTH = 1024;
   private provider: ethers.AbstractProvider;
+  private endpointProviders: ethers.JsonRpcProvider[];
   private bot: TelegramBot;
   private db: Database;
   private priceService: PriceService;
@@ -67,6 +68,7 @@ export class MonitoringService {
 
   private constructor(bot: TelegramBot) {
     this.provider = createRpcProvider();
+    this.endpointProviders = getConfiguredRpcEndpoints().map((endpoint) => new ethers.JsonRpcProvider(endpoint));
     this.bot = bot;
     this.db = Database.getInstance();
     this.priceService = new PriceService();
@@ -316,6 +318,40 @@ export class MonitoringService {
     return message.includes('maximum [from, to] blocks distance: 0');
   }
 
+  private isRpcMalformedGetLogsError(error: unknown): boolean {
+    const message = String(error || '').toLowerCase();
+    return message.includes('query returned more than 0 results');
+  }
+
+  private async queryFilterAcrossRpcEndpoints(
+    contract: any,
+    filter: any,
+    fromBlock: number,
+    toBlock: number
+  ): Promise<any[]> {
+    const providers = this.endpointProviders.length > 0
+      ? this.endpointProviders
+      : (this.provider instanceof ethers.JsonRpcProvider ? [this.provider] : []);
+
+    let lastError: unknown;
+    for (let index = 0; index < providers.length; index += 1) {
+      try {
+        return await contract.connect(providers[index]).queryFilter(filter, fromBlock, toBlock);
+      } catch (error) {
+        lastError = error;
+        logger.warn(
+          `RPC endpoint ${index + 1}/${providers.length} failed queryFilter for blocks ${fromBlock}-${toBlock}; trying next endpoint.`
+        );
+      }
+    }
+
+    if (lastError) {
+      throw lastError;
+    }
+
+    return [];
+  }
+
   private async queryFilterAdaptiveRange(
     contract: any,
     filter: any,
@@ -325,14 +361,36 @@ export class MonitoringService {
     try {
       return await contract.queryFilter(filter, fromBlock, toBlock);
     } catch (error) {
-      if (!this.isRpcSingleBlockRangeError(error) || fromBlock === toBlock) {
+      const malformedGetLogs = this.isRpcMalformedGetLogsError(error);
+      const singleBlockOnly = this.isRpcSingleBlockRangeError(error);
+
+      if (malformedGetLogs) {
+        try {
+          return await this.queryFilterAcrossRpcEndpoints(contract, filter, fromBlock, toBlock);
+        } catch (endpointRetryError) {
+          if (!singleBlockOnly || fromBlock === toBlock) {
+            throw endpointRetryError;
+          }
+        }
+      }
+
+      if (!singleBlockOnly || fromBlock === toBlock) {
         throw error;
       }
 
       const events: any[] = [];
       for (let block = fromBlock; block <= toBlock; block += 1) {
-        const blockEvents = await contract.queryFilter(filter, block, block);
-        events.push(...blockEvents);
+        try {
+          const blockEvents = await contract.queryFilter(filter, block, block);
+          events.push(...blockEvents);
+        } catch (blockError) {
+          if (!this.isRpcMalformedGetLogsError(blockError)) {
+            throw blockError;
+          }
+
+          const blockEvents = await this.queryFilterAcrossRpcEndpoints(contract, filter, block, block);
+          events.push(...blockEvents);
+        }
       }
       return events;
     }
