@@ -589,6 +589,17 @@ export class MonitoringService {
       if (normalizedFrom === normalizedTxFrom) {
         return { type: 'sell', trader: from };
       }
+
+      // Some router calls send bought tokens to a recipient that differs from tx.from.
+      // Treat transfer-to-recipient from a non-caller, non-router address as a buy.
+      if (
+        normalizedFrom !== normalizedTxFrom
+        && normalizedFrom !== zeroAddress
+        && normalizedTo !== normalizedTxTo
+        && !toAmmExecutor
+      ) {
+        return { type: 'buy', trader: to };
+      }
     }
 
     if (
