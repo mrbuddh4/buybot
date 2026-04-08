@@ -388,6 +388,19 @@ export class MonitoringService {
     return message.includes('query returned more than 0 results');
   }
 
+  private isTransientRpcQueryError(error: unknown): boolean {
+    const message = String(error || '').toLowerCase();
+    return (
+      message.includes('socket hang up')
+      || message.includes('econnreset')
+      || message.includes('etimedout')
+      || message.includes('timeout')
+      || message.includes('502 bad gateway')
+      || message.includes('503 service unavailable')
+      || message.includes('504 gateway timeout')
+    );
+  }
+
   private async queryFilterAcrossRpcEndpoints(
     contract: any,
     filter: any,
@@ -456,6 +469,17 @@ export class MonitoringService {
     } catch (error) {
       const malformedGetLogs = this.isRpcMalformedGetLogsError(error);
       const singleBlockOnly = this.isRpcSingleBlockRangeError(error);
+      const transientQueryError = this.isTransientRpcQueryError(error);
+
+      if (transientQueryError) {
+        try {
+          return await this.queryFilterAcrossRpcEndpoints(contract, filter, fromBlock, toBlock);
+        } catch (endpointRetryError) {
+          if (!singleBlockOnly || fromBlock === toBlock) {
+            throw endpointRetryError;
+          }
+        }
+      }
 
       if (malformedGetLogs) {
         try {
