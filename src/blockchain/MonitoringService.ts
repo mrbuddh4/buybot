@@ -312,7 +312,7 @@ export class MonitoringService {
 
       this.pollingInProgress = true;
       try {
-        const currentBlock = await this.provider.getBlockNumber();
+        const currentBlock = await this.getLatestBlockNumber();
         
         if (currentBlock > this.lastBlockNumber) {
           // Check blocks we may have missed
@@ -418,6 +418,31 @@ export class MonitoringService {
     }
 
     return [];
+  }
+
+  private async getLatestBlockNumber(): Promise<number> {
+    const providers = this.endpointProviders.length > 0
+      ? this.endpointProviders
+      : (this.provider instanceof ethers.JsonRpcProvider ? [this.provider] : []);
+
+    let lastError: unknown;
+    for (let index = 0; index < providers.length; index += 1) {
+      try {
+        const blockNumber = await providers[index].getBlockNumber();
+        this.recordRpcEndpointDiagnostic(index, true);
+        return blockNumber;
+      } catch (error) {
+        lastError = error;
+        this.recordRpcEndpointDiagnostic(index, false);
+        logger.warn(`RPC endpoint ${index + 1}/${providers.length} failed getBlockNumber; trying next endpoint.`);
+      }
+    }
+
+    if (providers.length === 0) {
+      return this.provider.getBlockNumber();
+    }
+
+    throw lastError;
   }
 
   private async queryFilterAdaptiveRange(
