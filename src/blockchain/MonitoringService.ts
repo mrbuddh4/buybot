@@ -60,6 +60,8 @@ export class MonitoringService {
   private rpcDiagWindowMinuteKey: string = '';
   private rpcDiagSuccessCounts: number[] = [];
   private rpcDiagFailureCounts: number[] = [];
+  private transientPollErrorLastLoggedAt: Map<string, number> = new Map();
+  private static readonly TRANSIENT_POLL_ERROR_LOG_WINDOW_MS = 60_000;
   private readonly ammRouterInterface = new ethers.Interface([
     'function swapExactETHForTokens(uint256 amountOutMin, address[] path, address to, uint256 deadline)',
     'function swapExactETHForTokensSupportingFeeOnTransferTokens(uint256 amountOutMin, address[] path, address to, uint256 deadline)',
@@ -348,7 +350,11 @@ export class MonitoringService {
                 }
               }
             } catch (hlpmmError) {
-              logger.error('Error polling HLPMM EventEmitter:', hlpmmError);
+              if (this.isTransientRpcQueryError(hlpmmError)) {
+                this.logTransientPollingError('Error polling HLPMM EventEmitter', hlpmmError);
+              } else {
+                logger.error('Error polling HLPMM EventEmitter:', hlpmmError);
+              }
             }
           }
 
@@ -364,14 +370,22 @@ export class MonitoringService {
                 }
               }
             } catch (sidioraEmitterError) {
-              logger.error('Error polling Sidiora EventEmitter:', sidioraEmitterError);
+              if (this.isTransientRpcQueryError(sidioraEmitterError)) {
+                this.logTransientPollingError('Error polling Sidiora EventEmitter', sidioraEmitterError);
+              } else {
+                logger.error('Error polling Sidiora EventEmitter:', sidioraEmitterError);
+              }
             }
           }
 
           this.lastBlockNumber = currentBlock;
         }
       } catch (error) {
-        logger.error('Error in polling loop:', error);
+        if (this.isTransientRpcQueryError(error)) {
+          this.logTransientPollingError('Error in polling loop', error);
+        } else {
+          logger.error('Error in polling loop:', error);
+        }
       } finally {
         this.pollingInProgress = false;
       }
@@ -399,6 +413,23 @@ export class MonitoringService {
       || message.includes('503 service unavailable')
       || message.includes('504 gateway timeout')
     );
+  }
+
+  private getCompactErrorMessage(error: unknown): string {
+    const text = String(error || '').replace(/\s+/g, ' ').trim();
+    return text.length > 220 ? `${text.slice(0, 220)}...` : text;
+  }
+
+  private logTransientPollingError(scope: string, error: unknown): void {
+    const now = Date.now();
+    const lastLoggedAt = this.transientPollErrorLastLoggedAt.get(scope) || 0;
+
+    if ((now - lastLoggedAt) < MonitoringService.TRANSIENT_POLL_ERROR_LOG_WINDOW_MS) {
+      return;
+    }
+
+    this.transientPollErrorLastLoggedAt.set(scope, now);
+    logger.warn(`${scope}: transient RPC error (${this.getCompactErrorMessage(error)})`);
   }
 
   private async queryFilterAcrossRpcEndpoints(
