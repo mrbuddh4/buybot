@@ -451,9 +451,15 @@ export class MonitoringService {
       } catch (error) {
         lastError = error;
         this.recordRpcEndpointDiagnostic(index, false);
-        logger.warn(
-          `RPC endpoint ${index + 1}/${providers.length} failed queryFilter for blocks ${fromBlock}-${toBlock}; trying next endpoint.`
-        );
+        if (providers.length > 1 && index < (providers.length - 1)) {
+          logger.warn(
+            `RPC endpoint ${index + 1}/${providers.length} failed queryFilter for blocks ${fromBlock}-${toBlock}; trying next endpoint.`
+          );
+        } else {
+          logger.warn(
+            `RPC endpoint ${index + 1}/${providers.length} failed queryFilter for blocks ${fromBlock}-${toBlock}; no additional endpoint available.`
+          );
+        }
       }
     }
 
@@ -478,7 +484,11 @@ export class MonitoringService {
       } catch (error) {
         lastError = error;
         this.recordRpcEndpointDiagnostic(index, false);
-        logger.warn(`RPC endpoint ${index + 1}/${providers.length} failed getBlockNumber; trying next endpoint.`);
+        if (providers.length > 1 && index < (providers.length - 1)) {
+          logger.warn(`RPC endpoint ${index + 1}/${providers.length} failed getBlockNumber; trying next endpoint.`);
+        } else {
+          logger.warn(`RPC endpoint ${index + 1}/${providers.length} failed getBlockNumber; no additional endpoint available.`);
+        }
       }
     }
 
@@ -506,7 +516,8 @@ export class MonitoringService {
         try {
           return await this.queryFilterAcrossRpcEndpoints(contract, filter, fromBlock, toBlock);
         } catch (endpointRetryError) {
-          if (!singleBlockOnly || fromBlock === toBlock) {
+          const retrySingleBlockOnly = this.isRpcSingleBlockRangeError(endpointRetryError);
+          if ((!singleBlockOnly && !retrySingleBlockOnly) || fromBlock === toBlock) {
             throw endpointRetryError;
           }
         }
@@ -516,7 +527,8 @@ export class MonitoringService {
         try {
           return await this.queryFilterAcrossRpcEndpoints(contract, filter, fromBlock, toBlock);
         } catch (endpointRetryError) {
-          if (!singleBlockOnly || fromBlock === toBlock) {
+          const retrySingleBlockOnly = this.isRpcSingleBlockRangeError(endpointRetryError);
+          if ((!singleBlockOnly && !retrySingleBlockOnly) || fromBlock === toBlock) {
             throw endpointRetryError;
           }
         }
