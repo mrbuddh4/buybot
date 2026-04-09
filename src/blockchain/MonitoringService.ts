@@ -856,6 +856,7 @@ export class MonitoringService {
     tx: ethers.TransactionResponse,
     boughtTokenAddress: string,
     estimatedAmountFallback: string,
+    payerAddress?: string,
     traderAddress?: string,
     receipt?: ethers.TransactionReceipt | null
   ): Promise<{ symbol: string; amount: string }> {
@@ -923,9 +924,26 @@ export class MonitoringService {
       // Fall through to receipt-based inference below.
     }
 
-    if (receipt && traderAddress) {
+    if (receipt) {
       const transferTopic = ethers.id('Transfer(address,address,uint256)').toLowerCase();
-      const traderLower = traderAddress.toLowerCase();
+      const candidateFromAddresses = new Set<string>();
+      const payerLower = (payerAddress || '').toLowerCase();
+      const traderLower = (traderAddress || '').toLowerCase();
+
+      if (/^0x[a-f0-9]{40}$/.test(payerLower)) {
+        candidateFromAddresses.add(payerLower);
+      }
+      if (/^0x[a-f0-9]{40}$/.test(traderLower)) {
+        candidateFromAddresses.add(traderLower);
+      }
+
+      if (candidateFromAddresses.size === 0) {
+        const txFromLower = String(tx.from || '').toLowerCase();
+        if (/^0x[a-f0-9]{40}$/.test(txFromLower)) {
+          candidateFromAddresses.add(txFromLower);
+        }
+      }
+
       let best: { token: string; amount: bigint } | null = null;
 
       for (const log of receipt.logs) {
@@ -940,7 +958,7 @@ export class MonitoringService {
 
         const fromTopic = String(topics[1] || '').toLowerCase();
         const fromAddress = (`0x${fromTopic.slice(-40)}`).toLowerCase();
-        if (fromAddress !== traderLower) {
+        if (!candidateFromAddresses.has(fromAddress)) {
           continue;
         }
 
@@ -1022,7 +1040,7 @@ export class MonitoringService {
       return Number.isFinite(fallbackUsdValue) ? fallbackUsdValue : 0;
     }
 
-    if (normalizedSymbol === 'USDC' || normalizedSymbol === 'USDT' || normalizedSymbol === 'USID' || normalizedSymbol === 'DAI') {
+    if (normalizedSymbol === 'USDC' || normalizedSymbol === 'USDT' || normalizedSymbol === 'USID' || normalizedSymbol === 'USDL' || normalizedSymbol === 'DAI') {
       return parsedPurchaseAmount;
     }
 
@@ -1147,6 +1165,7 @@ export class MonitoringService {
         tx,
         tokenAddress,
         estimatedEthValue,
+        tx.from,
         trader,
         receipt
       );
