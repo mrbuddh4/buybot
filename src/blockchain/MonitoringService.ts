@@ -855,7 +855,9 @@ export class MonitoringService {
   private async resolveAmmPurchaseDetails(
     tx: ethers.TransactionResponse,
     boughtTokenAddress: string,
-    estimatedAmountFallback: string
+    estimatedAmountFallback: string,
+    traderAddress?: string,
+    receipt?: ethers.TransactionReceipt | null
   ): Promise<{ symbol: string; amount: string }> {
     const nativeSymbol = process.env.NATIVE_CURRENCY_SYMBOL || 'PAX';
     const tokenAddressLower = boughtTokenAddress.toLowerCase();
@@ -918,8 +920,92 @@ export class MonitoringService {
         amount: ethers.formatUnits(rawAmount, Number(inputDecimals)),
       };
     } catch {
-      return { symbol: nativeSymbol, amount: estimatedAmountFallback };
+      // Fall through to receipt-based inference below.
     }
+
+    if (receipt && traderAddress) {
+      const transferTopic = ethers.id('Transfer(address,address,uint256)').toLowerCase();
+      const traderLower = traderAddress.toLowerCase();
+      let best: { token: string; amount: bigint } | null = null;
+
+      for (const log of receipt.logs) {
+        const topics = log.topics || [];
+        if (topics.length < 3) {
+          continue;
+        }
+
+        if (String(topics[0] || '').toLowerCase() !== transferTopic) {
+          continue;
+        }
+
+        const fromTopic = String(topics[1] || '').toLowerCase();
+        const fromAddress = (`0x${fromTopic.slice(-40)}`).toLowerCase();
+        if (fromAddress !== traderLower) {
+          continue;
+        }
+
+        const tokenAddress = String(log.address || '').toLowerCase();
+        if (!/^0x[a-f0-9]{40}$/.test(tokenAddress) || tokenAddress === tokenAddressLower) {
+          continue;
+        }
+
+        let amountRaw: bigint;
+        try {
+          amountRaw = BigInt(log.data || '0x0');
+        } catch {
+          continue;
+        }
+
+        if (amountRaw <= 0n) {
+          continue;
+        }
+
+        if (!best || amountRaw > best.amount) {
+          best = { token: tokenAddress, amount: amountRaw };
+        }
+      }
+
+      if (best) {
+        if (best.token === this.wethAddress.toLowerCase()) {
+          return {
+            symbol: nativeSymbol,
+            amount: ethers.formatEther(best.amount),
+          };
+        }
+
+        try {
+          const inputTokenContract = new ethers.Contract(
+            best.token,
+            [
+              'function symbol() view returns (string)',
+              'function decimals() view returns (uint8)',
+            ],
+            this.provider
+          );
+
+          const [inputSymbol, inputDecimals] = await Promise.all([
+            inputTokenContract.symbol(),
+            inputTokenContract.decimals(),
+          ]);
+
+          return {
+            symbol: inputSymbol,
+            amount: ethers.formatUnits(best.amount, Number(inputDecimals)),
+          };
+        } catch {
+          return {
+            symbol: 'TOKEN',
+            amount: ethers.formatUnits(best.amount, 18),
+          };
+        }
+      }
+    }
+
+    if (tx.value > 0n) {
+      return { symbol: nativeSymbol, amount: ethers.formatEther(tx.value) };
+    }
+
+    return { symbol: nativeSymbol, amount: estimatedAmountFallback };
   }
 
   private estimatePurchaseUsdValue(
@@ -1057,7 +1143,13 @@ export class MonitoringService {
       const priceInUsdNumeric = parseFloat(price?.priceInUsd || '0');
       const tokenAmountNumeric = parseFloat(tokenAmount || '0');
       const estimatedEthValue = (tokenAmountNumeric * priceInEthNumeric).toString();
-      const purchaseDetails = await this.resolveAmmPurchaseDetails(tx, tokenAddress, estimatedEthValue);
+      const purchaseDetails = await this.resolveAmmPurchaseDetails(
+        tx,
+        tokenAddress,
+        estimatedEthValue,
+        trader,
+        receipt
+      );
       const totalUsdValue = tokenAmountNumeric * priceInUsdNumeric;
       const purchaseUsdValue = this.estimatePurchaseUsdValue(
         purchaseDetails.symbol,
