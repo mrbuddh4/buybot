@@ -22,6 +22,7 @@ interface SwapEvent {
 }
 
 export class MonitoringService {
+  private static readonly STATUS_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
   private static instance: MonitoringService;
   private static readonly SETTINGS_MENU_IMAGE_RELATIVE_PATH = 'assets/images/settings-menu-header.jpg';
   private static readonly TELEGRAM_MAX_CAPTION_LENGTH = 1024;
@@ -52,6 +53,16 @@ export class MonitoringService {
   private statusUpdateInterval: NodeJS.Timeout | null = null;
   private statusUpdateStartupTimeout: NodeJS.Timeout | null = null;
   private statusUpdateInProgress: boolean = false;
+  private statusSnapshotCache: Map<string, {
+    tokenPriceUsd: number | null;
+    marketCapUsd: number | null;
+    volume24hUsd: number | null;
+    buyers24h: number | null;
+    sellers24h: number | null;
+    holders: number | null;
+    biggestBuy24hUsd: number | null;
+    capturedAt: number;
+  }> = new Map();
   private pollActivityDebugEnabled: boolean = false;
   private pollWindowMinuteKey: string = '';
   private pollWindowTransferEvents: number = 0;
@@ -2015,7 +2026,7 @@ export class MonitoringService {
           continue;
         }
 
-        const [tokenInfo, tokenPrice, metrics, largestRecentBuy, activitySummary, allTimeSummary, has24hHistory] = await Promise.all([
+        const [tokenInfo, tokenPrice, metrics, largestRecentBuy, activitySummary, allTimeSummary, has24hHistoryByTx, has24hHistoryByWatch] = await Promise.all([
           this.priceService.getTokenInfo(tokenAddress),
           this.priceService.getTokenPrice(tokenAddress),
           this.priceService.getTokenStatusMetrics(tokenAddress),
@@ -2023,14 +2034,15 @@ export class MonitoringService {
           this.db.getRecentTokenActivitySummary(tokenAddress, 24),
           this.db.getTokenActivitySummaryAllTime(tokenAddress),
           this.db.hasTokenHistoryWindow(tokenAddress, 24),
+          this.db.hasTokenWatchHistoryWindow(tokenAddress, 24),
         ]);
 
-        const effectiveVolume24hUsd = has24hHistory
-          ? (metrics.volume24hUsd ?? activitySummary.volume24hUsd)
-          : null;
-        const effectiveBuyers24h = has24hHistory ? metrics.buyers24h : null;
-        const effectiveSellers24h = has24hHistory ? metrics.sellers24h : null;
-        const effectiveHolders = metrics.holders;
+        const has24hHistory = has24hHistoryByTx || has24hHistoryByWatch;
+
+        const effectiveVolume24hUsd = metrics.volume24hUsd ?? (has24hHistory ? activitySummary.volume24hUsd : null);
+        const effectiveBuyers24h = metrics.buyers24h ?? (has24hHistory ? activitySummary.buyers24h : null);
+        const effectiveSellers24h = metrics.sellers24h ?? (has24hHistory ? activitySummary.sellers24h : null);
+        const effectiveHolders = metrics.holders ?? activitySummary.holdersEstimate;
         const effectiveBiggestBuy24hUsd =
           metrics.biggestBuy24hUsd
           ?? activitySummary.biggestBuy24hUsd
@@ -2040,9 +2052,34 @@ export class MonitoringService {
         const sinceStartBiggestBuyUsd = allTimeSummary.biggestBuyAllTimeUsd;
         const sinceStartBuyTxCount = allTimeSummary.buyTxCountAllTime;
         const sinceStartSellTxCount = allTimeSummary.sellTxCountAllTime;
-        const tokenPriceUsd = Number.isFinite(parseFloat(tokenPrice?.priceInUsd || ''))
+        const tokenPriceUsdRaw = Number.isFinite(parseFloat(tokenPrice?.priceInUsd || ''))
           ? parseFloat(tokenPrice?.priceInUsd || '0')
           : null;
+
+        const now = Date.now();
+        const cachedSnapshot = this.statusSnapshotCache.get(tokenAddress);
+        const cacheIsFresh = Boolean(cachedSnapshot && (now - cachedSnapshot.capturedAt) <= MonitoringService.STATUS_CACHE_TTL_MS);
+        const hasCachedSnapshot = Boolean(cachedSnapshot);
+
+        const useCacheFallback = cacheIsFresh || hasCachedSnapshot;
+        const tokenPriceUsd = tokenPriceUsdRaw ?? (useCacheFallback ? cachedSnapshot?.tokenPriceUsd ?? null : null);
+        const marketCapUsd = metrics.marketCapUsd ?? (useCacheFallback ? cachedSnapshot?.marketCapUsd ?? null : null);
+        const volume24hUsd = effectiveVolume24hUsd ?? (useCacheFallback ? cachedSnapshot?.volume24hUsd ?? null : null);
+        const buyers24h = effectiveBuyers24h ?? (useCacheFallback ? cachedSnapshot?.buyers24h ?? null : null);
+        const sellers24h = effectiveSellers24h ?? (useCacheFallback ? cachedSnapshot?.sellers24h ?? null : null);
+        const holders = effectiveHolders ?? (useCacheFallback ? cachedSnapshot?.holders ?? null : null);
+        const biggestBuy24hUsd = effectiveBiggestBuy24hUsd ?? (useCacheFallback ? cachedSnapshot?.biggestBuy24hUsd ?? null : null);
+
+        this.statusSnapshotCache.set(tokenAddress, {
+          tokenPriceUsd,
+          marketCapUsd,
+          volume24hUsd,
+          buyers24h,
+          sellers24h,
+          holders,
+          biggestBuy24hUsd,
+          capturedAt: now,
+        });
 
         const message = formatHourlyStatusUpdate({
           tokenAddress,
@@ -2050,12 +2087,12 @@ export class MonitoringService {
           tokenSymbol: tokenInfo?.symbol || watchedToken.symbol || 'UNKNOWN',
           is24hMature: has24hHistory,
           tokenPriceUsd,
-          marketCapUsd: metrics.marketCapUsd,
-          volume24hUsd: effectiveVolume24hUsd,
-          buyers24h: effectiveBuyers24h,
-          sellers24h: effectiveSellers24h,
-          holders: effectiveHolders,
-          biggestBuy24hUsd: effectiveBiggestBuy24hUsd,
+          marketCapUsd,
+          volume24hUsd,
+          buyers24h,
+          sellers24h,
+          holders,
+          biggestBuy24hUsd,
           sinceStartVolumeUsd,
           sinceStartBiggestBuyUsd,
           sinceStartBuyTxCount,

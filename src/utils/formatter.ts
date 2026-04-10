@@ -224,9 +224,11 @@ export function formatHourlyStatusUpdate(data: HourlyStatusData): string {
     lines.push(`⚖️ Buys/Sells: ${buyersVsSellersText}`);
   }
 
-  if (data.is24hMature === false) {
+  const has24hBiggestBuy = data.biggestBuy24hUsd !== null;
+
+  if (data.is24hMature === false && !has24hVolume && !hasBuySellRatio && !has24hBiggestBuy) {
     lines.push('🕒 24h metrics: collecting data (available after 24h of tracking)');
-  } else if (!has24hVolume && !hasBuySellRatio) {
+  } else if (!has24hVolume && !hasBuySellRatio && !has24hBiggestBuy) {
     lines.push('🕒 24h metrics: unavailable right now');
   }
 
@@ -236,6 +238,21 @@ export function formatHourlyStatusUpdate(data: HourlyStatusData): string {
 
   if (data.biggestBuy24hUsd !== null) {
     lines.push(`🏆 Biggest Buy (24h): ${formatUsdCompact(data.biggestBuy24hUsd)} USDC`);
+  }
+
+  if (data.sinceStartVolumeUsd !== undefined && data.sinceStartVolumeUsd !== null) {
+    lines.push(`📦 Since Start Volume: ${formatUsdCompact(data.sinceStartVolumeUsd)} USDC`);
+  }
+
+  if (data.sinceStartBiggestBuyUsd !== undefined && data.sinceStartBiggestBuyUsd !== null) {
+    lines.push(`🥇 Since Start Biggest Buy: ${formatUsdCompact(data.sinceStartBiggestBuyUsd)} USDC`);
+  }
+
+  if (
+    data.sinceStartBuyTxCount !== undefined
+    && data.sinceStartSellTxCount !== undefined
+  ) {
+    lines.push(`🧾 Since Start Tx: ${Math.max(0, data.sinceStartBuyTxCount)} buys / ${Math.max(0, data.sinceStartSellTxCount)} sells`);
   }
 
   if (lines.length === 0) {
