@@ -2069,6 +2069,18 @@ export class MonitoringService {
         const sellers24h = effectiveSellers24h ?? (useCacheFallback ? cachedSnapshot?.sellers24h ?? null : null);
         const holders = effectiveHolders ?? (useCacheFallback ? cachedSnapshot?.holders ?? null : null);
         const biggestBuy24hUsd = effectiveBiggestBuy24hUsd ?? (useCacheFallback ? cachedSnapshot?.biggestBuy24hUsd ?? null : null);
+        const dataSourceDegraded = Boolean(
+          cachedSnapshot
+          && (
+            (tokenPriceUsdRaw === null && cachedSnapshot.tokenPriceUsd !== null)
+            || (metrics.marketCapUsd === null && cachedSnapshot.marketCapUsd !== null)
+            || (effectiveVolume24hUsd === null && cachedSnapshot.volume24hUsd !== null)
+            || (effectiveBuyers24h === null && cachedSnapshot.buyers24h !== null)
+            || (effectiveSellers24h === null && cachedSnapshot.sellers24h !== null)
+            || (effectiveHolders === null && cachedSnapshot.holders !== null)
+            || (effectiveBiggestBuy24hUsd === null && cachedSnapshot.biggestBuy24hUsd !== null)
+          )
+        );
 
         this.statusSnapshotCache.set(tokenAddress, {
           tokenPriceUsd,
@@ -2086,6 +2098,7 @@ export class MonitoringService {
           tokenName: tokenInfo?.name || watchedToken.symbol || 'Unknown Token',
           tokenSymbol: tokenInfo?.symbol || watchedToken.symbol || 'UNKNOWN',
           is24hMature: has24hHistory,
+          dataSourceDegraded,
           tokenPriceUsd,
           marketCapUsd,
           volume24hUsd,

@@ -27,6 +27,7 @@ interface HourlyStatusData {
   tokenName: string;
   tokenSymbol: string;
   is24hMature?: boolean;
+  dataSourceDegraded?: boolean;
   tokenPriceUsd: number | null;
   marketCapUsd: number | null;
   volume24hUsd: number | null;
@@ -189,6 +190,10 @@ export function formatHourlyStatusUpdate(data: HourlyStatusData): string {
   const escapedTokenSymbol = escapeHtml(data.tokenSymbol);
 
   const lines: string[] = [];
+
+  if (data.dataSourceDegraded) {
+    lines.push('⚠️ Data source degraded: showing last known values while RPC/API recovers.');
+  }
 
   if (data.marketCapUsd !== null) {
     lines.push(`📈 Market Cap: ${formatUsdCompact(data.marketCapUsd)} USDC`);
