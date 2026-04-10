@@ -43,6 +43,7 @@ export class MonitoringService {
   private sidioraEventEmitter: ethers.Contract | null = null;
   private hlpmmFactory: ethers.Contract | null = null;
   private hlpmmUsidAddress: string | null = null;
+  private hlpmmStableSymbol: string = 'USDL';
   private hlpmmPoolTokenCache: Map<string, string> = new Map();
   private sidioraMarketByPoolId: Map<string, { token: string; pool: string }> = new Map();
   private hlpmmEnabled: boolean = false;
@@ -91,6 +92,12 @@ export class MonitoringService {
     this.routerAddress = process.env.DEX_ROUTER_ADDRESS!;
     this.ammExecutorAddresses = this.buildAmmExecutorAddressSet();
     this.wethAddress = process.env.WETH_ADDRESS!;
+    this.hlpmmStableSymbol = (
+      process.env.HLPMM_STABLE_SYMBOL
+      || process.env.SIDIORA_STABLE_SYMBOL
+      || process.env.HLPMM_USID_SYMBOL
+      || 'USDL'
+    ).trim().toUpperCase();
     this.pollActivityDebugEnabled = (process.env.POLL_ACTIVITY_DEBUG || 'false').toLowerCase() === 'true';
     this.rpcEndpointDiagnosticsEnabled = (process.env.RPC_ENDPOINT_DIAGNOSTICS || 'false').toLowerCase() === 'true';
     this.rpcDiagSuccessCounts = this.endpointProviders.map(() => 0);
@@ -863,7 +870,9 @@ export class MonitoringService {
     receipt?: ethers.TransactionReceipt | null
   ): Promise<{ symbol: string; amount: string }> {
     const nativeSymbol = process.env.NATIVE_CURRENCY_SYMBOL || 'PAX';
-    const unknownSymbol = 'UNKNOWN';
+    const unknownSymbol = 'TOKEN';
+    const stableAddressLower = this.hlpmmUsidAddress?.toLowerCase() || '';
+    const stableSymbol = this.hlpmmStableSymbol;
     const tokenAddressLower = boughtTokenAddress.toLowerCase();
 
     try {
@@ -907,6 +916,13 @@ export class MonitoringService {
       if (inputToken === this.wethAddress.toLowerCase()) {
         return {
           symbol: nativeSymbol,
+          amount: ethers.formatEther(rawAmount),
+        };
+      }
+
+      if (stableAddressLower && inputToken === stableAddressLower) {
+        return {
+          symbol: stableSymbol,
           amount: ethers.formatEther(rawAmount),
         };
       }
@@ -1000,6 +1016,13 @@ export class MonitoringService {
           };
         }
 
+        if (stableAddressLower && best.token === stableAddressLower) {
+          return {
+            symbol: stableSymbol,
+            amount: ethers.formatEther(best.amount),
+          };
+        }
+
         try {
           const inputTokenContract = new ethers.Contract(
             best.token,
@@ -1023,6 +1046,40 @@ export class MonitoringService {
           return {
             symbol: 'TOKEN',
             amount: ethers.formatUnits(best.amount, 18),
+          };
+        }
+      }
+
+      if (stableAddressLower) {
+        let stableAmount: bigint = 0n;
+        const transferTopic = ethers.id('Transfer(address,address,uint256)').toLowerCase();
+
+        for (const log of receipt.logs) {
+          const topics = log.topics || [];
+          if (topics.length < 3) {
+            continue;
+          }
+          if (String(topics[0] || '').toLowerCase() !== transferTopic) {
+            continue;
+          }
+          if (String(log.address || '').toLowerCase() !== stableAddressLower) {
+            continue;
+          }
+
+          try {
+            const amountRaw = BigInt(log.data || '0x0');
+            if (amountRaw > stableAmount) {
+              stableAmount = amountRaw;
+            }
+          } catch {
+            continue;
+          }
+        }
+
+        if (stableAmount > 0n) {
+          return {
+            symbol: stableSymbol,
+            amount: ethers.formatEther(stableAmount),
           };
         }
       }
@@ -1490,6 +1547,12 @@ export class MonitoringService {
       const purchaseAmountRaw = isBuy ? amountIn : amountOut;
       const purchaseTokenAddress = (isBuy ? tokenIn : tokenOut).toLowerCase();
 
+      const resolvedPurchaseSymbol = (
+        this.hlpmmUsidAddress && purchaseTokenAddress === this.hlpmmUsidAddress
+      )
+        ? this.hlpmmStableSymbol
+        : null;
+
       const purchaseTokenContract = new ethers.Contract(
         purchaseTokenAddress,
         [
@@ -1500,8 +1563,8 @@ export class MonitoringService {
       );
 
       const [purchaseSymbol, purchaseDecimals] = await Promise.all([
-        purchaseTokenContract.symbol().catch(() => 'UNKNOWN'),
-        purchaseTokenContract.decimals().catch(() => 18),
+        Promise.resolve(resolvedPurchaseSymbol).then((value) => value || purchaseTokenContract.symbol().catch(() => 'TOKEN')),
+        Promise.resolve(resolvedPurchaseSymbol ? 18 : null).then((value) => value ?? purchaseTokenContract.decimals().catch(() => 18)),
       ]);
 
       const tokenAmount = ethers.formatUnits(tokenAmountRaw, tokenDecimals);

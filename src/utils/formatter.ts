@@ -144,7 +144,7 @@ export function formatTransactionAlert(data: TransactionAlertData): string {
   const ethAmount = parseFloat(data.ethValue) || 0;
   const tokenAmount = parseFloat(data.amount) || 0;
   const tokenUnitUsdPriceText = formatTokenUsdPrice(data.priceInUsd);
-  const purchaseCurrencySymbol = data.purchaseCurrencySymbol || (data.dexSource === 'HLPMM' ? 'USID' : 'PAX');
+  const purchaseCurrencySymbol = data.purchaseCurrencySymbol || (data.dexSource === 'HLPMM' ? 'USDL' : 'PAX');
   
   const explorerUrl = process.env.BLOCK_EXPLORER_URL || 'https://etherscan.io';
   const escapedTokenName = escapeHtml(data.tokenName);

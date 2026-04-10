@@ -1178,7 +1178,7 @@ Updated: ${new Date().toLocaleString()}
 
         const isHlpmm = await this.tokenMetadataService.isHLPMMToken(tokenAddress);
         const dexSource = isHlpmm ? 'HLPMM' : 'AMM';
-        const purchaseCurrencySymbol = isHlpmm ? 'USID' : 'PAX';
+        const purchaseCurrencySymbol = isHlpmm ? 'USDL' : 'PAX';
 
         const previewCore = formatTransactionAlert({
           type: 'buy',
