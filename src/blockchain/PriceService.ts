@@ -32,6 +32,8 @@ export class PriceService {
   private statusMetricsDebugLoggedTokens: Set<string> = new Set();
   private paxUsdErrorLoggedAt: number = 0;
   private walletTotalUsdCache: Map<string, { value: number | null; expiresAt: number }> = new Map();
+  private transientRpcErrorLastLoggedAt: Map<string, number> = new Map();
+  private static readonly TRANSIENT_RPC_ERROR_LOG_WINDOW_MS = 60_000;
 
   constructor() {
     this.provider = createRpcProvider();
@@ -45,6 +47,38 @@ export class PriceService {
     this.explorerApiBaseUrl = (process.env.BLOCK_EXPLORER_API_URL || 'https://paxscan.io/api').replace(/\/+$/, '');
     this.explorerApiKey = process.env.BLOCK_EXPLORER_API_KEY || process.env.ETHERSCAN_API_KEY || '';
     this.statusMetricsDebugEnabled = (process.env.STATUS_METRICS_DEBUG || 'false').toLowerCase() === 'true';
+  }
+
+  private isTransientRpcError(error: unknown): boolean {
+    const message = String(error || '').toLowerCase();
+    return (
+      message.includes('socket hang up')
+      || message.includes('econnreset')
+      || message.includes('etimedout')
+      || message.includes('timeout')
+      || message.includes('server response 502')
+      || message.includes('"code":502')
+      || message.includes('502 bad gateway')
+      || message.includes('503 service unavailable')
+      || message.includes('504 gateway timeout')
+    );
+  }
+
+  private getCompactErrorMessage(error: unknown): string {
+    const text = String(error || '').replace(/\s+/g, ' ').trim();
+    return text.length > 220 ? `${text.slice(0, 220)}...` : text;
+  }
+
+  private logTransientRpcWarning(scope: string, error: unknown): void {
+    const now = Date.now();
+    const lastLoggedAt = this.transientRpcErrorLastLoggedAt.get(scope) || 0;
+
+    if ((now - lastLoggedAt) < PriceService.TRANSIENT_RPC_ERROR_LOG_WINDOW_MS) {
+      return;
+    }
+
+    this.transientRpcErrorLastLoggedAt.set(scope, now);
+    logger.warn(`${scope}: transient RPC error (${this.getCompactErrorMessage(error)})`);
   }
 
   private async getPaxscanTokenStats(tokenAddress: string): Promise<Partial<TokenStatusMetrics>> {
@@ -571,7 +605,11 @@ export class PriceService {
         priceInUsd: this.normalizeUsdPrice(parseFloat(priceInUsd || '0')),
       };
     } catch (error) {
-      logger.error('Error getting token price from AMM:', error);
+      if (this.isTransientRpcError(error)) {
+        this.logTransientRpcWarning('Error getting token price from AMM', error);
+      } else {
+        logger.error('Error getting token price from AMM:', error);
+      }
       const fallbackPrice = await this.getHLPMMTokenPrice(tokenAddress);
       return fallbackPrice;
     }
@@ -951,7 +989,11 @@ export class PriceService {
 
       return { priceInEth, priceInUsd };
     } catch (error) {
-      logger.error('Error getting HLPMM token price:', error);
+      if (this.isTransientRpcError(error)) {
+        this.logTransientRpcWarning('Error getting HLPMM token price', error);
+      } else {
+        logger.error('Error getting HLPMM token price:', error);
+      }
       return null;
     }
   }
@@ -982,7 +1024,11 @@ export class PriceService {
       const marketCap = await quoterContract.getMarketCap(poolAddress);
       return ethers.formatEther(marketCap);
     } catch (error) {
-      logger.error('Error getting HLPMM market cap:', error);
+      if (this.isTransientRpcError(error)) {
+        this.logTransientRpcWarning('Error getting HLPMM market cap', error);
+      } else {
+        logger.error('Error getting HLPMM market cap:', error);
+      }
       return null;
     }
   }
@@ -1128,7 +1174,11 @@ export class PriceService {
         totalSupply,
       };
     } catch (error) {
-      logger.error('Error getting token info:', error);
+      if (this.isTransientRpcError(error)) {
+        this.logTransientRpcWarning('Error getting token info', error);
+      } else {
+        logger.error('Error getting token info:', error);
+      }
       return null;
     }
   }
