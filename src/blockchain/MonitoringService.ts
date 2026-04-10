@@ -863,6 +863,7 @@ export class MonitoringService {
     receipt?: ethers.TransactionReceipt | null
   ): Promise<{ symbol: string; amount: string }> {
     const nativeSymbol = process.env.NATIVE_CURRENCY_SYMBOL || 'PAX';
+    const unknownSymbol = 'UNKNOWN';
     const tokenAddressLower = boughtTokenAddress.toLowerCase();
 
     try {
@@ -871,7 +872,7 @@ export class MonitoringService {
         if (tx.value > 0n) {
           return { symbol: nativeSymbol, amount: ethers.formatEther(tx.value) };
         }
-        return { symbol: nativeSymbol, amount: estimatedAmountFallback };
+        return { symbol: unknownSymbol, amount: estimatedAmountFallback };
       }
 
       const name = parsed.name;
@@ -879,7 +880,10 @@ export class MonitoringService {
       const path = Array.isArray(pathArg) ? (pathArg as string[]) : [];
 
       if (path.length < 2 || path[path.length - 1].toLowerCase() !== tokenAddressLower) {
-        return { symbol: nativeSymbol, amount: estimatedAmountFallback };
+        if (tx.value > 0n) {
+          return { symbol: nativeSymbol, amount: ethers.formatEther(tx.value) };
+        }
+        return { symbol: unknownSymbol, amount: estimatedAmountFallback };
       }
 
       const inputToken = path[0].toLowerCase();
@@ -894,7 +898,10 @@ export class MonitoringService {
       }
 
       if (!rawAmount || rawAmount <= 0n) {
-        return { symbol: nativeSymbol, amount: estimatedAmountFallback };
+        if (tx.value > 0n) {
+          return { symbol: nativeSymbol, amount: ethers.formatEther(tx.value) };
+        }
+        return { symbol: unknownSymbol, amount: estimatedAmountFallback };
       }
 
       if (inputToken === this.wethAddress.toLowerCase()) {
@@ -1025,7 +1032,7 @@ export class MonitoringService {
       return { symbol: nativeSymbol, amount: ethers.formatEther(tx.value) };
     }
 
-    return { symbol: nativeSymbol, amount: estimatedAmountFallback };
+    return { symbol: unknownSymbol, amount: estimatedAmountFallback };
   }
 
   private estimatePurchaseUsdValue(
@@ -1480,15 +1487,31 @@ export class MonitoringService {
       const tokenInfo = await this.priceService.getTokenInfo(monitoredTokenAddress);
       const tokenDecimals = tokenInfo?.decimals ?? 18;
       const tokenAmountRaw = isBuy ? amountOut : amountIn;
-      const usidAmountRaw = isBuy ? amountIn : amountOut;
+      const purchaseAmountRaw = isBuy ? amountIn : amountOut;
+      const purchaseTokenAddress = (isBuy ? tokenIn : tokenOut).toLowerCase();
+
+      const purchaseTokenContract = new ethers.Contract(
+        purchaseTokenAddress,
+        [
+          'function symbol() view returns (string)',
+          'function decimals() view returns (uint8)',
+        ],
+        this.provider
+      );
+
+      const [purchaseSymbol, purchaseDecimals] = await Promise.all([
+        purchaseTokenContract.symbol().catch(() => 'UNKNOWN'),
+        purchaseTokenContract.decimals().catch(() => 18),
+      ]);
+
       const tokenAmount = ethers.formatUnits(tokenAmountRaw, tokenDecimals);
-      const usidAmount = ethers.formatEther(usidAmountRaw);
+      const purchaseAmount = ethers.formatUnits(purchaseAmountRaw, Number(purchaseDecimals));
 
       const tokenAmountNumeric = parseFloat(tokenAmount || '0');
-      const usidAmountNumeric = parseFloat(usidAmount || '0');
+      const purchaseAmountNumeric = parseFloat(purchaseAmount || '0');
 
       const priceInUsdNumeric = tokenAmountNumeric > 0
-        ? usidAmountNumeric / tokenAmountNumeric
+        ? purchaseAmountNumeric / tokenAmountNumeric
         : 0;
 
       const price = await this.priceService.getTokenPrice(monitoredTokenAddress);
@@ -1497,7 +1520,13 @@ export class MonitoringService {
         : (price?.priceInUsd || '0');
       const effectivePriceInEth = price?.priceInEth || '0';
 
-      const totalUsdValue = usidAmountNumeric;
+      const totalUsdValue = this.estimatePurchaseUsdValue(
+        purchaseSymbol,
+        purchaseAmount,
+        tokenAmountNumeric * parseFloat(effectivePriceInUsd || '0'),
+        parseFloat(effectivePriceInUsd || '0'),
+        parseFloat(effectivePriceInEth || '0')
+      );
 
       const hlpmmMarketCap = await this.priceService.getHLPMMMarketCap(monitoredTokenAddress);
       const marketCapUsd = tokenInfo?.marketCapUsd
@@ -1553,7 +1582,7 @@ export class MonitoringService {
           'sell',
           buyer,
           tokenAmountRaw.toString(),
-          usidAmount,
+          purchaseAmount,
           totalUsdValue
         );
         await this.db.setTraderPosition(monitoredTokenAddress, buyer, currentHoldingsToken);
@@ -1589,7 +1618,7 @@ export class MonitoringService {
           tokenSymbol: tokenInfo?.symbol || 'UNKNOWN',
           tokenName: tokenInfo?.name || 'Unknown Token',
           amount: tokenAmount,
-          ethValue: usidAmount,
+          ethValue: purchaseAmount,
           priceInEth: effectivePriceInEth,
           priceInUsd: effectivePriceInUsd,
           marketCapUsd,
@@ -1603,8 +1632,8 @@ export class MonitoringService {
           txHash,
           blockNumber,
           dexSource: 'HLPMM',
-          purchaseCurrencySymbol: 'USID',
-          purchaseAmountUsd: usidAmountNumeric,
+          purchaseCurrencySymbol: purchaseSymbol,
+          purchaseAmountUsd: totalUsdValue,
         });
 
         const links = await this.db.getAlertLinks(watcher.chat_id);
@@ -1710,7 +1739,7 @@ export class MonitoringService {
           'buy',
           buyer,
           amountOut.toString(),
-          usidAmount,
+          purchaseAmount,
           totalUsdValue
         );
         await this.db.setTraderPosition(monitoredTokenAddress, buyer, currentHoldingsToken);
