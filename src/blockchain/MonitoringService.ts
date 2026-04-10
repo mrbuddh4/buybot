@@ -409,6 +409,8 @@ export class MonitoringService {
       || message.includes('econnreset')
       || message.includes('etimedout')
       || message.includes('timeout')
+      || message.includes('server response 502')
+      || message.includes('"code":502')
       || message.includes('502 bad gateway')
       || message.includes('503 service unavailable')
       || message.includes('504 gateway timeout')
@@ -1405,7 +1407,11 @@ export class MonitoringService {
 
       logger.info(`Detected ${type.toUpperCase()} (AMM): ${tokenInfo?.symbol || tokenAddress} - ${swapEvent.txHash}`);
     } catch (error) {
-      logger.error('Error handling transfer event:', error);
+      if (this.isTransientRpcQueryError(error)) {
+        this.logTransientPollingError('Error handling transfer event', error);
+      } else {
+        logger.error('Error handling transfer event:', error);
+      }
     }
   }
 
