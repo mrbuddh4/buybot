@@ -20,6 +20,7 @@ export interface TokenStatusMetrics {
 export class PriceService {
   private provider: ethers.AbstractProvider;
   private routerAddress: string;
+  private dexFactoryAddress: string | null;
   private wethAddress: string;
   private usdcAddress: string;
   private hlpmmQuoterAddress: string | null;
@@ -40,6 +41,7 @@ export class PriceService {
   constructor() {
     this.provider = createRpcProvider();
     this.routerAddress = process.env.DEX_ROUTER_ADDRESS!;
+    this.dexFactoryAddress = process.env.DEX_FACTORY_ADDRESS || null;
     this.wethAddress = process.env.WETH_ADDRESS!;
     // Prefer explicitly configured stable quote token, then USID, then known default.
     this.usdcAddress = process.env.USDC_ADDRESS || process.env.HLPMM_USID_ADDRESS || '0xf8850b62AE017c55be7f571BBad840b4f3DA7D49';
@@ -102,6 +104,66 @@ export class PriceService {
       ]);
 
       return price;
+    } catch {
+      return null;
+    }
+  }
+
+  private async getPaxUsdPriceFromPoolReserves(usdcDecimals: number): Promise<number | null> {
+    if (!this.dexFactoryAddress) {
+      return null;
+    }
+
+    try {
+      const factory = new ethers.Contract(
+        this.dexFactoryAddress,
+        ['function getPair(address tokenA, address tokenB) view returns (address pair)'],
+        this.provider
+      );
+
+      const pairAddress: string = await factory.getPair(this.wethAddress, this.usdcAddress);
+      if (!pairAddress || pairAddress === ethers.ZeroAddress) {
+        return null;
+      }
+
+      const pair = new ethers.Contract(
+        pairAddress,
+        [
+          'function token0() view returns (address)',
+          'function token1() view returns (address)',
+          'function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)',
+        ],
+        this.provider
+      );
+
+      const [token0, reserves] = await Promise.all([
+        pair.token0() as Promise<string>,
+        pair.getReserves() as Promise<[bigint, bigint, number]>,
+      ]);
+
+      const [reserve0Raw, reserve1Raw] = reserves;
+      const token0Lower = token0.toLowerCase();
+      const wethLower = this.wethAddress.toLowerCase();
+
+      let wethReserveRaw: bigint;
+      let usdcReserveRaw: bigint;
+
+      if (token0Lower === wethLower) {
+        wethReserveRaw = reserve0Raw;
+        usdcReserveRaw = reserve1Raw;
+      } else {
+        wethReserveRaw = reserve1Raw;
+        usdcReserveRaw = reserve0Raw;
+      }
+
+      const wethReserve = parseFloat(ethers.formatUnits(wethReserveRaw, 18));
+      const usdcReserve = parseFloat(ethers.formatUnits(usdcReserveRaw, usdcDecimals));
+
+      if (!Number.isFinite(wethReserve) || !Number.isFinite(usdcReserve) || wethReserve <= 0 || usdcReserve <= 0) {
+        return null;
+      }
+
+      return usdcReserve / wethReserve;
     } catch {
       return null;
     }
@@ -1133,6 +1195,16 @@ export class PriceService {
           logger.warn('PAX/USD quote unavailable from router; using portfolio API quote fallback.');
         }
         return portfolioQuote;
+      }
+
+      const reserveQuote = await this.getPaxUsdPriceFromPoolReserves(usdcDecimals);
+      if (reserveQuote !== null && Number.isFinite(reserveQuote) && reserveQuote > 0) {
+        this.paxUsdLastGoodQuote = { value: reserveQuote, ts: now };
+        if (now - this.paxUsdErrorLoggedAt >= 5 * 60 * 1000) {
+          this.paxUsdErrorLoggedAt = now;
+          logger.warn('PAX/USD quote unavailable from router/APIs; using on-chain pool reserves fallback.');
+        }
+        return reserveQuote;
       }
 
       const explorerQuote = await this.getPaxUsdPriceFromExplorerApi();
