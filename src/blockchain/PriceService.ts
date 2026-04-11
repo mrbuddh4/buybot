@@ -25,7 +25,7 @@ export class PriceService {
   private usdcAddress: string;
   private hlpmmQuoterAddress: string | null;
   private hlpmmFactoryAddress: string | null;
-  private hlpmmUsidAddress: string | null;
+  private hlpmmStableAddress: string | null;
   private portfolioApiBaseUrl: string;
   private explorerApiBaseUrl: string;
   private explorerApiKey: string;
@@ -43,11 +43,11 @@ export class PriceService {
     this.routerAddress = process.env.DEX_ROUTER_ADDRESS!;
     this.dexFactoryAddress = process.env.DEX_FACTORY_ADDRESS || null;
     this.wethAddress = process.env.WETH_ADDRESS!;
-    // Prefer explicitly configured stable quote token, then USID, then known default.
-    this.usdcAddress = process.env.USDC_ADDRESS || process.env.HLPMM_USID_ADDRESS || '0xf8850b62AE017c55be7f571BBad840b4f3DA7D49';
+    // Prefer explicitly configured stable quote token, then HLPMM stable token, then known default.
+    this.usdcAddress = process.env.USDC_ADDRESS || process.env.HLPMM_STABLE_ADDRESS || process.env.HLPMM_USDL_ADDRESS || process.env.HLPMM_USID_ADDRESS || '0xf8850b62AE017c55be7f571BBad840b4f3DA7D49';
     this.hlpmmQuoterAddress = process.env.HLPMM_QUOTER_ADDRESS || null;
     this.hlpmmFactoryAddress = process.env.HLPMM_FACTORY_ADDRESS || null;
-    this.hlpmmUsidAddress = process.env.HLPMM_USID_ADDRESS || null;
+    this.hlpmmStableAddress = process.env.HLPMM_STABLE_ADDRESS || process.env.HLPMM_USDL_ADDRESS || process.env.HLPMM_USID_ADDRESS || null;
     this.portfolioApiBaseUrl = (process.env.PORTFOLIO_API_BASE_URL || 'https://us-east-1.user-stats.sidiora.exchange').replace(/\/+$/, '');
     const explorerApiUrl = process.env.BLOCK_EXPLORER_API_URL || process.env.BLOCK_EXPLORER_URL || 'https://api.paxscan.io/api';
     this.explorerApiBaseUrl = explorerApiUrl.replace(/\/+$/, '');
@@ -1070,7 +1070,7 @@ export class PriceService {
   }
 
   async getHLPMMTokenPrice(tokenAddress: string): Promise<TokenPrice | null> {
-    if (!this.hlpmmQuoterAddress || !this.hlpmmFactoryAddress || !this.hlpmmUsidAddress) {
+    if (!this.hlpmmQuoterAddress || !this.hlpmmFactoryAddress || !this.hlpmmStableAddress) {
       return null;
     }
 

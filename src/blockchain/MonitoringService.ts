@@ -43,7 +43,7 @@ export class MonitoringService {
   private hlpmmEventEmitter: ethers.Contract | null = null;
   private sidioraEventEmitter: ethers.Contract | null = null;
   private hlpmmFactory: ethers.Contract | null = null;
-  private hlpmmUsidAddress: string | null = null;
+  private hlpmmStableAddress: string | null = null;
   private hlpmmStableSymbol: string = 'USDL';
   private hlpmmPoolTokenCache: Map<string, string> = new Map();
   private sidioraMarketByPoolId: Map<string, { token: string; pool: string }> = new Map();
@@ -106,6 +106,7 @@ export class MonitoringService {
     this.hlpmmStableSymbol = (
       process.env.HLPMM_STABLE_SYMBOL
       || process.env.SIDIORA_STABLE_SYMBOL
+      || process.env.HLPMM_USDL_SYMBOL
       || process.env.HLPMM_USID_SYMBOL
       || 'USDL'
     ).trim().toUpperCase();
@@ -210,10 +211,10 @@ export class MonitoringService {
   private initHLPMM(): void {
     const emitterAddr = process.env.HLPMM_EVENT_EMITTER_ADDRESS;
     const factoryAddr = process.env.HLPMM_FACTORY_ADDRESS;
-    const usidAddr = process.env.HLPMM_USID_ADDRESS;
+    const stableAddr = process.env.HLPMM_STABLE_ADDRESS || process.env.HLPMM_USDL_ADDRESS || process.env.HLPMM_USID_ADDRESS;
 
-    if (!emitterAddr || !factoryAddr || !usidAddr) {
-      logger.info('HLPMM monitoring disabled (missing HLPMM_EVENT_EMITTER_ADDRESS, HLPMM_FACTORY_ADDRESS, or HLPMM_USID_ADDRESS)');
+    if (!emitterAddr || !factoryAddr || !stableAddr) {
+      logger.info('HLPMM monitoring disabled (missing HLPMM_EVENT_EMITTER_ADDRESS, HLPMM_FACTORY_ADDRESS, or HLPMM_STABLE_ADDRESS/HLPMM_USDL_ADDRESS)');
       return;
     }
 
@@ -243,9 +244,9 @@ export class MonitoringService {
       this.provider
     );
 
-    this.hlpmmUsidAddress = usidAddr.toLowerCase();
+    this.hlpmmStableAddress = stableAddr.toLowerCase();
     this.hlpmmEnabled = true;
-    logger.info('HLPMM monitoring enabled', { emitterAddr, factoryAddr, usidAddr });
+    logger.info('HLPMM monitoring enabled', { emitterAddr, factoryAddr, stableAddr });
   }
 
   static getInstance(bot: TelegramBot): MonitoringService {
@@ -541,13 +542,22 @@ export class MonitoringService {
       const malformedGetLogs = this.isRpcMalformedGetLogsError(error);
       const singleBlockOnly = this.isRpcSingleBlockRangeError(error);
       const transientQueryError = this.isTransientRpcQueryError(error);
+      let shouldTryBlockByBlock = singleBlockOnly;
 
       if (transientQueryError) {
         try {
           return await this.queryFilterAcrossRpcEndpoints(contract, filter, fromBlock, toBlock);
         } catch (endpointRetryError) {
           const retrySingleBlockOnly = this.isRpcSingleBlockRangeError(endpointRetryError);
-          if ((!singleBlockOnly && !retrySingleBlockOnly) || fromBlock === toBlock) {
+          if (fromBlock === toBlock) {
+            throw endpointRetryError;
+          }
+          if (retrySingleBlockOnly) {
+            shouldTryBlockByBlock = true;
+          }
+          if (this.isTransientRpcQueryError(endpointRetryError) || this.isRpcMalformedGetLogsError(endpointRetryError)) {
+            shouldTryBlockByBlock = true;
+          } else {
             throw endpointRetryError;
           }
         }
@@ -558,7 +568,7 @@ export class MonitoringService {
           return await this.queryFilterAcrossRpcEndpoints(contract, filter, fromBlock, toBlock);
         } catch (endpointRetryError) {
           const retrySingleBlockOnly = this.isRpcSingleBlockRangeError(endpointRetryError);
-          if ((!singleBlockOnly && !retrySingleBlockOnly) || fromBlock === toBlock) {
+          if (fromBlock === toBlock) {
             if (fromBlock === toBlock && this.isRpcMalformedGetLogsError(endpointRetryError)) {
               this.logTransientPollingError(
                 `Skipping malformed eth_getLogs response for block ${fromBlock}`,
@@ -568,10 +578,33 @@ export class MonitoringService {
             }
             throw endpointRetryError;
           }
+          if (retrySingleBlockOnly || this.isRpcMalformedGetLogsError(endpointRetryError)) {
+            shouldTryBlockByBlock = true;
+          } else if (!this.isTransientRpcQueryError(endpointRetryError)) {
+            throw endpointRetryError;
+          } else {
+            shouldTryBlockByBlock = true;
+          }
         }
       }
 
-      if (!singleBlockOnly || fromBlock === toBlock) {
+      if (fromBlock === toBlock) {
+        if (this.isRpcMalformedGetLogsError(error)) {
+          this.logTransientPollingError(
+            `Skipping malformed eth_getLogs response for block ${fromBlock}`,
+            error
+          );
+          return [];
+        }
+        throw error;
+      }
+
+      // Some RPCs intermittently reject ranged eth_getLogs; degrade to per-block scanning.
+      if (!shouldTryBlockByBlock && (transientQueryError || malformedGetLogs)) {
+        shouldTryBlockByBlock = true;
+      }
+
+      if (!shouldTryBlockByBlock) {
         throw error;
       }
 
@@ -642,7 +675,7 @@ export class MonitoringService {
 
   private async handleSidioraSwapEvent(event: any): Promise<void> {
     try {
-      if (!this.hlpmmUsidAddress) {
+      if (!this.hlpmmStableAddress) {
         return;
       }
 
@@ -666,7 +699,7 @@ export class MonitoringService {
         return;
       }
 
-      const stableToken = this.hlpmmUsidAddress.toLowerCase();
+      const stableToken = this.hlpmmStableAddress.toLowerCase();
       const tokenIn = isBuy ? stableToken : market.token;
       const tokenOut = isBuy ? market.token : stableToken;
 
@@ -910,7 +943,7 @@ export class MonitoringService {
   ): Promise<{ symbol: string; amount: string }> {
     const nativeSymbol = process.env.NATIVE_CURRENCY_SYMBOL || 'PAX';
     const unknownSymbol = 'TOKEN';
-    const stableAddressLower = this.hlpmmUsidAddress?.toLowerCase() || '';
+    const stableAddressLower = this.hlpmmStableAddress?.toLowerCase() || '';
     const stableSymbol = this.hlpmmStableSymbol;
     const tokenAddressLower = boughtTokenAddress.toLowerCase();
 
@@ -1553,8 +1586,8 @@ export class MonitoringService {
 
       if (!txHash || !blockNumber) return;
 
-      const isBuy = tokenIn.toLowerCase() === this.hlpmmUsidAddress;
-      const isSell = tokenOut.toLowerCase() === this.hlpmmUsidAddress;
+      const isBuy = tokenIn.toLowerCase() === this.hlpmmStableAddress;
+      const isSell = tokenOut.toLowerCase() === this.hlpmmStableAddress;
       if (!isBuy && !isSell) return;
 
       const eventTokenAddress = (isBuy ? tokenOut : tokenIn).toLowerCase();
@@ -1587,7 +1620,7 @@ export class MonitoringService {
       const purchaseTokenAddress = (isBuy ? tokenIn : tokenOut).toLowerCase();
 
       const resolvedPurchaseSymbol = (
-        this.hlpmmUsidAddress && purchaseTokenAddress === this.hlpmmUsidAddress
+        this.hlpmmStableAddress && purchaseTokenAddress === this.hlpmmStableAddress
       )
         ? this.hlpmmStableSymbol
         : null;
