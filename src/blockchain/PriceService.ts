@@ -49,7 +49,8 @@ export class PriceService {
     this.hlpmmFactoryAddress = process.env.HLPMM_FACTORY_ADDRESS || null;
     this.hlpmmUsidAddress = process.env.HLPMM_USID_ADDRESS || null;
     this.portfolioApiBaseUrl = (process.env.PORTFOLIO_API_BASE_URL || 'https://us-east-1.user-stats.sidiora.exchange').replace(/\/+$/, '');
-    this.explorerApiBaseUrl = (process.env.BLOCK_EXPLORER_API_URL || 'https://paxscan.io/api').replace(/\/+$/, '');
+    const explorerApiUrl = process.env.BLOCK_EXPLORER_API_URL || process.env.BLOCK_EXPLORER_URL || 'https://api.paxscan.io/api';
+    this.explorerApiBaseUrl = explorerApiUrl.replace(/\/+$/, '');
     this.explorerApiKey = process.env.BLOCK_EXPLORER_API_KEY || process.env.ETHERSCAN_API_KEY || '';
     this.statusMetricsDebugEnabled = (process.env.STATUS_METRICS_DEBUG || 'false').toLowerCase() === 'true';
     this.paxUsdStaticOnly = (process.env.PAX_USD_STATIC_ONLY || 'false').toLowerCase() === 'true';

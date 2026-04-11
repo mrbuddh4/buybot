@@ -75,7 +75,7 @@ ENCRYPTION_KEY=your_32_character_encryption_key_here
 - `CHAIN_ID` - Network chain ID
 - `ETHERSCAN_API_KEY` - For enhanced blockchain data
 - `COINGECKO_API_KEY` - For better price feeds
-- `BLOCK_EXPLORER_API_URL` - Explorer API endpoint for tx-history fallback stats (default: `https://paxscan.io/api`)
+- `BLOCK_EXPLORER_API_URL` - Explorer API endpoint for tx-history fallback stats (default: `https://api.paxscan.io/api`)
 - `BLOCK_EXPLORER_API_KEY` - Optional explorer API key for higher rate limits
 - `STATUS_METRICS_DEBUG` - Log one-time per-token metric source breakdown (`true`/`false`, default: `false`)
 - `HOURLY_STATUS_UPDATES_ENABLED` - Enable/disable periodic watched-token status updates (default: `true`)

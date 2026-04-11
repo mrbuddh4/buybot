@@ -339,19 +339,27 @@ export class MonitoringService {
           const fromBlock = this.lastBlockNumber === 0 ? currentBlock : this.lastBlockNumber + 1;
           
           for (const [tokenAddress, contract] of this.monitoredTokens) {
-            const filter = contract.filters.Transfer();
-            const events = await this.queryFilterAdaptiveRange(contract, filter, fromBlock, currentBlock);
-            this.pollWindowTransferEvents += events.length;
-            
-            for (const event of events) {
-              if ('args' in event) {
-                await this.handleTransferEvent(
-                  tokenAddress,
-                  event.args[0],
-                  event.args[1],
-                  event.args[2],
-                  event
-                );
+            try {
+              const filter = contract.filters.Transfer();
+              const events = await this.queryFilterAdaptiveRange(contract, filter, fromBlock, currentBlock);
+              this.pollWindowTransferEvents += events.length;
+
+              for (const event of events) {
+                if ('args' in event) {
+                  await this.handleTransferEvent(
+                    tokenAddress,
+                    event.args[0],
+                    event.args[1],
+                    event.args[2],
+                    event
+                  );
+                }
+              }
+            } catch (tokenPollError) {
+              if (this.isTransientRpcQueryError(tokenPollError) || this.isRpcMalformedGetLogsError(tokenPollError)) {
+                this.logTransientPollingError(`Error polling token transfer events for ${tokenAddress}`, tokenPollError);
+              } else {
+                logger.error(`Error polling token transfer events for ${tokenAddress}:`, tokenPollError);
               }
             }
           }
@@ -432,6 +440,8 @@ export class MonitoringService {
       || message.includes('502 bad gateway')
       || message.includes('503 service unavailable')
       || message.includes('504 gateway timeout')
+      || message.includes('could not coalesce error')
+      || message.includes('query returned more than 0 results')
     );
   }
 
@@ -549,6 +559,13 @@ export class MonitoringService {
         } catch (endpointRetryError) {
           const retrySingleBlockOnly = this.isRpcSingleBlockRangeError(endpointRetryError);
           if ((!singleBlockOnly && !retrySingleBlockOnly) || fromBlock === toBlock) {
+            if (fromBlock === toBlock && this.isRpcMalformedGetLogsError(endpointRetryError)) {
+              this.logTransientPollingError(
+                `Skipping malformed eth_getLogs response for block ${fromBlock}`,
+                endpointRetryError
+              );
+              return [];
+            }
             throw endpointRetryError;
           }
         }
@@ -568,8 +585,19 @@ export class MonitoringService {
             throw blockError;
           }
 
-          const blockEvents = await this.queryFilterAcrossRpcEndpoints(contract, filter, block, block);
-          events.push(...blockEvents);
+          try {
+            const blockEvents = await this.queryFilterAcrossRpcEndpoints(contract, filter, block, block);
+            events.push(...blockEvents);
+          } catch (endpointBlockError) {
+            if (this.isRpcMalformedGetLogsError(endpointBlockError)) {
+              this.logTransientPollingError(
+                `Skipping malformed eth_getLogs response for block ${block}`,
+                endpointBlockError
+              );
+              continue;
+            }
+            throw endpointBlockError;
+          }
         }
       }
       return events;
