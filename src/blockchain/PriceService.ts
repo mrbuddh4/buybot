@@ -31,6 +31,8 @@ export class PriceService {
   private statusMetricsDebugEnabled: boolean;
   private statusMetricsDebugLoggedTokens: Set<string> = new Set();
   private paxUsdErrorLoggedAt: number = 0;
+  private paxUsdLastGoodQuote: { value: number; ts: number } | null = null;
+  private paxUsdStaticOnly: boolean;
   private walletTotalUsdCache: Map<string, { value: number | null; expiresAt: number }> = new Map();
   private transientRpcErrorLastLoggedAt: Map<string, number> = new Map();
   private static readonly TRANSIENT_RPC_ERROR_LOG_WINDOW_MS = 60_000;
@@ -39,7 +41,8 @@ export class PriceService {
     this.provider = createRpcProvider();
     this.routerAddress = process.env.DEX_ROUTER_ADDRESS!;
     this.wethAddress = process.env.WETH_ADDRESS!;
-    this.usdcAddress = process.env.USDC_ADDRESS || '0xf8850b62AE017c55be7f571BBad840b4f3DA7D49';
+    // Prefer explicitly configured stable quote token, then USID, then known default.
+    this.usdcAddress = process.env.USDC_ADDRESS || process.env.HLPMM_USID_ADDRESS || '0xf8850b62AE017c55be7f571BBad840b4f3DA7D49';
     this.hlpmmQuoterAddress = process.env.HLPMM_QUOTER_ADDRESS || null;
     this.hlpmmFactoryAddress = process.env.HLPMM_FACTORY_ADDRESS || null;
     this.hlpmmUsidAddress = process.env.HLPMM_USID_ADDRESS || null;
@@ -47,6 +50,61 @@ export class PriceService {
     this.explorerApiBaseUrl = (process.env.BLOCK_EXPLORER_API_URL || 'https://paxscan.io/api').replace(/\/+$/, '');
     this.explorerApiKey = process.env.BLOCK_EXPLORER_API_KEY || process.env.ETHERSCAN_API_KEY || '';
     this.statusMetricsDebugEnabled = (process.env.STATUS_METRICS_DEBUG || 'false').toLowerCase() === 'true';
+    this.paxUsdStaticOnly = (process.env.PAX_USD_STATIC_ONLY || 'false').toLowerCase() === 'true';
+  }
+
+  private getFallbackPaxUsdPrice(): number {
+    const fallbackPrice = parseFloat(process.env.PAX_USD_PRICE || '11.51');
+    return Number.isFinite(fallbackPrice) && fallbackPrice > 0 ? fallbackPrice : 11.51;
+  }
+
+  private async getPaxUsdPriceFromPortfolioApi(): Promise<number | null> {
+    try {
+      const nativeToken = await this.getTokenFromPortfolioApi(this.wethAddress);
+      if (!nativeToken) {
+        return null;
+      }
+
+      const price = this.parseNumericField(nativeToken, [
+        'price_usd',
+        'priceUsd',
+        'current_price_usd',
+        'currentPriceUsd',
+        'usd_price',
+        'usdPrice',
+      ]);
+
+      return price;
+    } catch {
+      return null;
+    }
+  }
+
+  private async getPaxUsdPriceFromExplorerApi(): Promise<number | null> {
+    try {
+      const response = await axios.get(this.explorerApiBaseUrl, {
+        params: {
+          module: 'stats',
+          action: 'ethprice',
+          apikey: this.explorerApiKey,
+        },
+        timeout: 8000,
+      });
+
+      const result = response.data?.result;
+      const price = this.parseNumericField(result, [
+        'ethusd',
+        'ethUsd',
+        'paxusd',
+        'paxUsd',
+        'price_usd',
+        'priceUsd',
+      ]);
+
+      return price;
+    } catch {
+      return null;
+    }
   }
 
   private isTransientRpcError(error: unknown): boolean {
@@ -1034,6 +1092,10 @@ export class PriceService {
   }
 
   private async getPaxUsdPrice(usdcDecimals: number): Promise<number> {
+    if (this.paxUsdStaticOnly) {
+      return this.getFallbackPaxUsdPrice();
+    }
+
     try {
       const routerABI = [
         'function getAmountsOut(uint amountIn, address[] memory path) public view returns (uint[] memory amounts)',
@@ -1043,16 +1105,51 @@ export class PriceService {
       const onePax = ethers.parseEther('1');
       const path = [this.wethAddress, this.usdcAddress];
       const amounts = await router.getAmountsOut(onePax, path);
+      const quoted = parseFloat(ethers.formatUnits(amounts[1], usdcDecimals));
+      if (Number.isFinite(quoted) && quoted > 0) {
+        this.paxUsdLastGoodQuote = { value: quoted, ts: Date.now() };
+        return quoted;
+      }
 
-      return parseFloat(ethers.formatUnits(amounts[1], usdcDecimals));
+      throw new Error('Invalid PAX/USD quote returned by router');
     } catch (error) {
       const now = Date.now();
+
+      // Prefer last successful quote for short-lived router/RPC issues.
+      const cacheMaxAgeMs = 60 * 60 * 1000;
+      if (this.paxUsdLastGoodQuote && (now - this.paxUsdLastGoodQuote.ts) <= cacheMaxAgeMs) {
+        if (now - this.paxUsdErrorLoggedAt >= 5 * 60 * 1000) {
+          this.paxUsdErrorLoggedAt = now;
+          logger.warn('PAX/USD quote unavailable from router; using cached last-known-good quote.');
+        }
+        return this.paxUsdLastGoodQuote.value;
+      }
+
+      const portfolioQuote = await this.getPaxUsdPriceFromPortfolioApi();
+      if (portfolioQuote !== null && Number.isFinite(portfolioQuote) && portfolioQuote > 0) {
+        this.paxUsdLastGoodQuote = { value: portfolioQuote, ts: now };
+        if (now - this.paxUsdErrorLoggedAt >= 5 * 60 * 1000) {
+          this.paxUsdErrorLoggedAt = now;
+          logger.warn('PAX/USD quote unavailable from router; using portfolio API quote fallback.');
+        }
+        return portfolioQuote;
+      }
+
+      const explorerQuote = await this.getPaxUsdPriceFromExplorerApi();
+      if (explorerQuote !== null && Number.isFinite(explorerQuote) && explorerQuote > 0) {
+        this.paxUsdLastGoodQuote = { value: explorerQuote, ts: now };
+        if (now - this.paxUsdErrorLoggedAt >= 5 * 60 * 1000) {
+          this.paxUsdErrorLoggedAt = now;
+          logger.warn('PAX/USD quote unavailable from router; using explorer API quote fallback.');
+        }
+        return explorerQuote;
+      }
+
       if (now - this.paxUsdErrorLoggedAt >= 5 * 60 * 1000) {
         this.paxUsdErrorLoggedAt = now;
-        logger.warn('PAX/USD quote unavailable from router; using fallback PAX_USD_PRICE.');
+        logger.warn('PAX/USD quote unavailable from router/APIs; using fallback PAX_USD_PRICE.');
       }
-      const fallbackPrice = parseFloat(process.env.PAX_USD_PRICE || '11.51');
-      return Number.isFinite(fallbackPrice) && fallbackPrice > 0 ? fallbackPrice : 11.51;
+      return this.getFallbackPaxUsdPrice();
     }
   }
 
